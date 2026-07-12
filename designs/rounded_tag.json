@@ -10,17 +10,17 @@
       "label": "Компактный",
       "width_mm": 50.0,
       "height_mm": 28.0,
-      "thickness_mm": 2.0,
+      "thickness_mm": 2.1,
       "font_size_mm": 5.5,
       "price": 12,
       "editor_params": {
         "base_width_mm": 50.0,
         "base_height_mm": 28.0,
-        "thickness_mm": 2.0,
+        "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
         "hole": {
-          "x_mm": 7.0,
+          "x_mm": 4.0,
           "y_mm": 14.0,
           "radius_mm": 2.35
         },
@@ -34,8 +34,8 @@
             "relief_height_mm": 0.8
           },
           "car": {
-            "x_offset_mm": 5.0,
-            "y_offset_mm": 0.0,
+            "x_offset_mm": 1.6,
+            "y_offset_mm": 1.7,
             "box_width_mm": 28.0,
             "box_height_mm": 9.52,
             "font_size_mm": 5.5,
@@ -45,27 +45,28 @@
             "x_offset_mm": 3.0,
             "y_offset_mm": 0.0,
             "box_width_mm": 32.0,
-            "box_height_mm": 6.16,
-            "font_size_mm": 2.64,
+            "box_height_mm": 6.3,
+            "font_size_mm": 3.5,
             "relief_height_mm": 0.8
           }
         }
       },
       "relief_height_mm": 0.8,
-      "model_scale": 1
+      "model_scale": 1,
+      "legacy_model_scale": 1
     },
     {
       "id": "standard",
       "label": "Стандарт",
       "width_mm": 62,
       "height_mm": 34,
-      "thickness_mm": 2.0,
+      "thickness_mm": 2.1,
       "font_size_mm": 6.5,
       "price": 15,
       "editor_params": {
         "base_width_mm": 62,
         "base_height_mm": 34,
-        "thickness_mm": 2.0,
+        "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "hole": {
           "x_mm": 7,

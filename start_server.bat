@@ -26,10 +26,8 @@ if "%PORT_STATUS%"=="2" set "SERVER_ALREADY_RUNNING=1"
 ".venv\Scripts\python.exe" "scripts\generate_static_qr.py"
 if errorlevel 1 exit /b %ERRORLEVEL%
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Start-KeychainHotspot.ps1" -Port 8080 > "tmp\keychain_fair_hotspot.log" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Start-KeychainHotspot.ps1" -Port 8080
 if errorlevel 1 exit /b %ERRORLEVEL%
-
-type "tmp\keychain_fair_hotspot.log"
 
 if "%SERVER_ALREADY_RUNNING%"=="1" (
   echo Site:  http://192.168.137.1:8080/

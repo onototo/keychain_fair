@@ -46,7 +46,8 @@ function Invoke-ElevatedSelf {
     "-Ssid", "`"$Ssid`"",
     "-SkipElevation"
   )
-  $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentList -Verb RunAs -Wait -PassThru
+  $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentList -Verb RunAs -PassThru
+  $process.WaitForExit()
   exit $process.ExitCode
 }
 
@@ -128,6 +129,41 @@ if (-not $Ssid) { $Ssid = "KeychainFair" }
 if (-not $ValidateOnly -and -not $SkipElevation -and -not (Test-IsAdmin)) {
   Write-Host "Requesting administrator rights to stop Mobile Hotspot..."
   Invoke-ElevatedSelf
+}
+
+$pidPath = Join-Path $Root "tmp\keychain_fair_hotspot.pid"
+$readyPath = Join-Path $Root "tmp\keychain_fair_hotspot.ready"
+$upstreamStatePath = Join-Path $Root "tmp\keychain_fair_upstream_wifi.profile"
+$stopPath = Join-Path $Root "tmp\keychain_fair_hotspot.stop"
+$offlinePid = Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue | Select-Object -First 1
+$offlineProcess = if ($offlinePid) { Get-Process -Id $offlinePid -ErrorAction SilentlyContinue } else { $null }
+
+if ($ValidateOnly -and $offlineProcess) {
+  [pscustomobject]@{
+    Mode = "Offline Wi-Fi Direct Legacy"
+    OperationalState = "On"
+    CurrentSsid = $Ssid
+    ProcessId = $offlineProcess.Id
+  } | Format-List
+  exit 0
+}
+
+if (-not $ValidateOnly -and $offlineProcess) {
+  Write-Host "Stopping offline hotspot '$Ssid'..."
+  Set-Content -LiteralPath $stopPath -Value "stop"
+  Wait-Process -Id $offlineProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
+  if (Get-Process -Id $offlineProcess.Id -ErrorAction SilentlyContinue) {
+    Stop-Process -Id $offlineProcess.Id -Force
+  }
+  Remove-Item -LiteralPath $pidPath, $readyPath, $stopPath -Force -ErrorAction SilentlyContinue
+  $upstreamProfile = Get-Content -LiteralPath $upstreamStatePath -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($upstreamProfile) {
+    Write-Host "Restoring automatic connection for Wi-Fi profile '$upstreamProfile'..."
+    & netsh wlan set profileparameter name="$upstreamProfile" connectionmode=auto | Out-Null
+    Remove-Item -LiteralPath $upstreamStatePath -Force -ErrorAction SilentlyContinue
+  }
+  Write-Host "Offline hotspot '$Ssid' stopped."
+  exit 0
 }
 
 Initialize-WinRtAsync

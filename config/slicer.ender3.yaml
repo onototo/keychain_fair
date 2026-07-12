@@ -6,7 +6,7 @@ printer:
 material:
   type: PLA
   nozzle_temperature_c: 200
-  bed_temperature_c: 60
+  bed_temperature_c: 50
 
 quality:
   layer_height_mm: 0.2
@@ -108,7 +108,7 @@ cura_engine:
     material_print_temperature_layer_0: 205
     material_initial_print_temperature: 205
     material_final_print_temperature: 205
-    material_bed_temperature: 60
+    material_bed_temperature: 45
     material_bed_temperature_layer_0: 60
     speed_print: 75
     speed_wall: 38
