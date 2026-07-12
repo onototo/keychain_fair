@@ -1,0 +1,203 @@
+{
+  "id": "stacked_plate_classic",
+  "name": "Номерной классик",
+  "description": "Лаконичная пластина в пропорции автомобильного номера: имя сверху, телефон снизу, номер по центру.",
+  "template": "stacked_plate_classic.scad",
+  "layout": "stacked_plate",
+  "accent": "#ffffff",
+  "preview_style": "classic",
+  "top_block_ratio": 0.56,
+  "bottom_block_ratio": 0.56,
+  "section_overlap_mm": 1.4,
+  "default_elements": [
+    "car",
+    "loop_left"
+  ],
+  "default_size_id": "standard",
+  "sizes": [
+    {
+      "id": "compact",
+      "label": "Маленький",
+      "width_mm": 88,
+      "height_mm": 20,
+      "row_height_mm": 20,
+      "section_overlap_mm": 1.4,
+      "thickness_mm": 2.0,
+      "font_size_mm": 8.6,
+      "model_scale": 0.6,
+      "price": 14,
+      "editor_params": {
+        "base_width_mm": 52.8,
+        "base_height_mm": 12,
+        "thickness_mm": 2.0,
+        "relief_height_mm": 0.8,
+        "hole": {
+          "x_mm": 0,
+          "y_mm": 0,
+          "radius_mm": 1.2
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 3.715,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5.16,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 3.922,
+            "relief_height_mm": 0.8
+          }
+        }
+      },
+      "relief_height_mm": 0.8
+    },
+    {
+      "id": "standard",
+      "label": "Средний",
+      "width_mm": 66.0,
+      "height_mm": 15.0,
+      "row_height_mm": 15.0,
+      "section_overlap_mm": 1.05,
+      "thickness_mm": 2.0,
+      "font_size_mm": 6.45,
+      "model_scale": 1,
+      "price": 17,
+      "editor_params": {
+        "base_width_mm": 66.0,
+        "base_height_mm": 15.0,
+        "thickness_mm": 2.0,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 1.05,
+        "hole": {
+          "x_mm": 0.0,
+          "y_mm": 0.0,
+          "radius_mm": 1.5
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
+            "font_size_mm": 4.644,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
+            "font_size_mm": 6.45,
+            "relief_height_mm": 0.6
+          },
+          "phone": {
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
+            "font_size_mm": 4.902,
+            "relief_height_mm": 0.8
+          }
+        }
+      },
+      "legacy_model_scale": 0.75,
+      "relief_height_mm": 0.8
+    },
+    {
+      "id": "large",
+      "label": "Большой",
+      "width_mm": 88,
+      "height_mm": 20,
+      "row_height_mm": 20,
+      "section_overlap_mm": 1.4,
+      "thickness_mm": 2.0,
+      "font_size_mm": 8.6,
+      "model_scale": 0.9,
+      "price": 20,
+      "editor_params": {
+        "base_width_mm": 79.2,
+        "base_height_mm": 18,
+        "thickness_mm": 2.0,
+        "relief_height_mm": 0.8,
+        "hole": {
+          "x_mm": 0,
+          "y_mm": 0,
+          "radius_mm": 1.8
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5.573,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 7.74,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5.882,
+            "relief_height_mm": 0.8
+          }
+        }
+      },
+      "relief_height_mm": 0.8
+    }
+  ],
+  "elements": [
+    {
+      "id": "name",
+      "label": "Имя",
+      "shape": "name",
+      "kind": "content"
+    },
+    {
+      "id": "car",
+      "label": "Номер авто",
+      "shape": "car",
+      "kind": "content"
+    },
+    {
+      "id": "phone",
+      "label": "Телефон",
+      "shape": "phone",
+      "kind": "content"
+    },
+    {
+      "id": "loop_left",
+      "label": "Слева",
+      "shape": "loop_left",
+      "kind": "loop_side"
+    },
+    {
+      "id": "loop_right",
+      "label": "Справа",
+      "shape": "loop_right",
+      "kind": "loop_side"
+    }
+  ]
+}

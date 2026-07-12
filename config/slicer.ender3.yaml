@@ -1,0 +1,185 @@
+printer:
+  name: KeychainFair Marlin 220x220
+  bed_size_mm: [220, 220, 250]
+  nozzle_diameter_mm: 0.4
+
+material:
+  type: PLA
+  nozzle_temperature_c: 200
+  bed_temperature_c: 60
+
+quality:
+  layer_height_mm: 0.2
+  wall_line_count: 2
+  infill_percent: 12
+  print_speed_mm_s: 75
+
+cura_engine:
+  search_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions"
+  settings_json_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions\\fdmprinter.def.json"
+  extruder_json_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions\\fdmextruder.def.json"
+  settings:
+    machine_name: KeychainFair
+    machine_width: 220
+    machine_depth: 220
+    machine_height: 250
+    machine_center_is_zero: false
+    machine_heated_bed: true
+    machine_gcode_flavor: "RepRap (Marlin/Sprinter)"
+    extruders_enabled_count: 1
+    material_print_temp_prepend: false
+    material_bed_temp_prepend: false
+    material_print_temp_wait: false
+    material_bed_temp_wait: false
+    machine_start_gcode: |
+      ; Start heating before any movement
+      M140 S60
+      M104 S205
+      M190 S55
+      M109 S200
+      M140 S60
+      M104 S205
+      ; Home only after bed and hotend are within 5C of target
+      G90
+      G28
+      ; Prime nozzle along the left edge of the bed
+      G1 Z2.0 F3000
+      G1 X2.0 Y10.0 F5000
+      G1 Z0.28 F3000
+      G92 E0
+      G1 X2.0 Y200.0 E15 F1200
+      G1 X2.4 Y200.0 F5000
+      G1 X2.4 Y10.0 E30 F1200
+      G92 E0
+      G1 Z2.0 F3000
+    machine_end_gcode: |
+      M104 S0
+      M140 S0
+      G91
+      G1 E-1 F300
+      G1 Z10 F3000
+      G90
+      G1 X0 Y220 F3000
+      M84
+    adhesion_type: brim
+    layer_height: 0.2
+    layer_height_0: 0.1
+    line_width: 0.4
+    material_flow_layer_0: 115
+    wall_line_width: 0.4
+    wall_line_count: 2
+    wall_thickness: 0.8
+    top_layers: 4
+    bottom_layers: 3
+    top_thickness: 0.8
+    bottom_thickness: 0.6
+    top_bottom_thickness: 0.8
+    roofing_layer_count: 0
+    roofing_monotonic: false
+    infill_sparse_density: 12
+    infill_pattern: grid
+    infill_before_walls: true
+    infill_overlap: 30
+    skin_overlap: 5
+    infill_wipe_dist: 0.1
+    wall_0_wipe_dist: 0.2
+    fill_outline_gaps: false
+    support_enable: false
+    support_angle: 60
+    support_pattern: zigzag
+    support_infill_rate: 15
+    support_use_towers: true
+    support_xy_distance: 0.7
+    support_xy_distance_overhang: 0.2
+    support_z_distance: 0.2
+    support_top_distance: 0.2
+    support_xy_overrides_z: z_overrides_xy
+    support_wall_count: 0
+    support_brim_enable: false
+    support_brim_width: 8
+    support_interface_enable: false
+    support_interface_height: 1
+    support_interface_density: 100
+    support_interface_pattern: concentric
+    support_interface_skip_height: 0.3
+    minimum_support_area: 0
+    minimum_interface_area: 0
+    material_print_temperature: 205
+    material_print_temperature_layer_0: 205
+    material_initial_print_temperature: 205
+    material_final_print_temperature: 205
+    material_bed_temperature: 60
+    material_bed_temperature_layer_0: 60
+    speed_print: 75
+    speed_wall: 38
+    speed_wall_0: 30
+    speed_wall_x: 45
+    speed_topbottom: 38
+    speed_infill: 75
+    speed_travel: 120
+    speed_layer_0: 20
+    speed_roofing: 38
+    speed_travel_layer_0: 60
+    speed_prime_tower: 75
+    speed_support: 75
+    speed_support_interface: 38
+    speed_z_hop: 10
+    acceleration_enabled: false
+    acceleration_print: 500
+    acceleration_travel: 1000
+    acceleration_travel_layer_0: 500
+    acceleration_roofing: 500
+    jerk_enabled: false
+    jerk_print: 8
+    jerk_travel: 10
+    jerk_travel_layer_0: 8
+    machine_acceleration: 500
+    machine_max_feedrate_x: 500
+    machine_max_feedrate_y: 500
+    machine_max_feedrate_z: 5
+    machine_max_feedrate_e: 25
+    machine_max_acceleration_x: 500
+    machine_max_acceleration_y: 500
+    machine_max_acceleration_z: 100
+    machine_max_acceleration_e: 5000
+    machine_max_jerk_xy: 8
+    machine_max_jerk_z: 0.4
+    machine_max_jerk_e: 5
+    z_seam_type: shortest
+    z_seam_corner: z_seam_corner_inner
+    retraction_enable: true
+    retraction_amount: 5
+    retraction_speed: 45
+    retraction_retract_speed: 45
+    retraction_prime_speed: 45
+    retraction_hop: 0.4
+    retraction_hop_enabled: true
+    retraction_hop_only_when_collides: true
+    retraction_combing: all
+    retraction_combing_max_distance: 0
+    retraction_count_max: 90
+    retraction_extrusion_window: 5
+    retraction_min_travel: 1.5
+    travel_avoid_other_parts: true
+    travel_avoid_supports: false
+    travel_retract_before_outer_wall: false
+    cool_fan_enabled: true
+    cool_fan_speed: 100
+    cool_fan_full_at_height: 0.6
+    cool_min_layer_time: 5
+    brim_replaces_support: false
+    skirt_gap: 3
+    skirt_line_count: 0
+    adaptive_layer_height_variation: 0.1
+    adaptive_layer_height_variation_step: 0.01
+    meshfix_maximum_resolution: 0.5
+    meshfix_maximum_travel_resolution: 0.5
+    optimize_wall_printing_order: false
+  extruder_settings:
+    extruder_nr: 0
+    machine_nozzle_size: 0.4
+    material_diameter: 1.75
+    machine_nozzle_tip_outer_diameter: 1.0
+    machine_nozzle_head_distance: 3
+    machine_nozzle_expansion_angle: 45
+  extra_args: []

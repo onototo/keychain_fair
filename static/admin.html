@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Панель оператора</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260711-qr-hotspot" />
+  </head>
+  <body>
+    <main id="login" class="login panel">
+      <div class="panel-head">
+        <h1>Оператор</h1>
+      </div>
+      <form id="loginForm" class="panel-body">
+        <label>
+          PIN
+          <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" />
+        </label>
+        <button type="submit">Войти</button>
+        <div id="loginMessage" class="message"></div>
+      </form>
+    </main>
+
+    <main id="admin" class="shell admin-shell" hidden>
+      <header class="topbar">
+        <div class="brand">
+          <h1>Заказы</h1>
+          <span id="toolStatus" class="muted"></span>
+        </div>
+        <div class="toolbar">
+          <a class="button-link secondary" href="/editor">3D редактор</a>
+          <button id="downloadStats" class="secondary">Скачать статистику</button>
+          <button id="prepareQueue">Подготовить стол</button>
+          <button id="printBatch" class="danger" disabled>Запустить печать</button>
+          <button id="heatBed" class="secondary" disabled>Разогреть стол и хотэнд</button>
+          <button id="coolBed" class="secondary" disabled>Отключить нагрев</button>
+          <button id="resumePrint" class="secondary" disabled>Продолжить печать</button>
+          <button id="stopPrint" class="danger" disabled>Стоп</button>
+          <button id="logout" class="secondary">Выйти</button>
+        </div>
+      </header>
+
+      <aside id="printerWidget" class="printer-widget printer-offline" aria-live="polite">
+        <div class="printer-widget-row">
+          <span id="printerDot" class="printer-dot"></span>
+          <span id="printerOnline">offline</span>
+        </div>
+        <div id="printerPhase" class="printer-phase">waiting</div>
+        <div id="printerTime" class="printer-time">прошло -- / осталось --</div>
+      </aside>
+      <aside id="filamentNotice" class="filament-notice" aria-live="assertive" hidden>
+        <strong>Смена пластика</strong>
+        <span>Печать на паузе. Замените пластик и нажмите «Продолжить печать».</span>
+      </aside>
+
+      <section class="admin-layout">
+        <div class="admin-main">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Список</h2>
+              <span id="ordersCount" class="pill">0</span>
+            </div>
+            <div class="panel-body">
+              <table class="orders-table">
+                <thead>
+                  <tr>
+                    <th>Время</th>
+                    <th>Имя</th>
+                    <th>Телефон</th>
+                    <th>Авто</th>
+                    <th>Дизайн</th>
+                    <th>Статус</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="ordersBody"></tbody>
+              </table>
+              <div id="adminMessage" class="message"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Печатный стол</h2>
+              <span id="batchStatus" class="pill">Нет партии</span>
+            </div>
+            <div class="panel-body">
+              <div id="bedMeta" class="small muted"></div>
+              <div id="bedPreview" class="print-bed" aria-label="Предпросмотр печатного стола"></div>
+              <div id="batchItems" class="batch-items"></div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="panel qr-panel">
+          <div class="panel-head">
+            <h3>QR</h3>
+          </div>
+          <div class="panel-body">
+            <div class="qr-list">
+              <div class="qr-item">
+                <img id="wifiQr" class="qr" alt="Wi-Fi QR" />
+                <strong>Wi-Fi</strong>
+                <div id="wifiSsid" class="small muted"></div>
+              </div>
+              <div class="qr-item">
+                <img id="orderQr" class="qr" alt="Order QR" />
+                <strong>Order</strong>
+                <div id="siteUrl" class="small muted"></div>
+              </div>
+              <div class="qr-item">
+                <img id="adminQr" class="qr" alt="Admin QR" />
+                <strong>Admin</strong>
+                <div id="adminUrl" class="small muted"></div>
+              </div>
+            </div>
+            <div id="addresses" class="small muted"></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/static/admin.js?v=20260711-qr-hotspot"></script>
+  </body>
+</html>

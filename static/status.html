@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Статус заказа</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Статус заказа</h1>
+          <span id="orderId" class="muted"></span>
+        </div>
+        <a href="/" class="muted small">Новый заказ</a>
+      </header>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 id="statusLabel">...</h2>
+          <span id="updatedAt" class="muted small"></span>
+        </div>
+        <div class="panel-body">
+          <div class="status-strip">
+            <span id="customer" class="pill"></span>
+            <span id="car" class="pill"></span>
+            <span id="phone" class="pill"></span>
+          </div>
+          <div id="details" class="message"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/status.js"></script>
+  </body>
+</html>
+

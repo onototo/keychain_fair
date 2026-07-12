@@ -1,0 +1,8 @@
+fastapi==0.139.0
+uvicorn[standard]==0.50.2
+pydantic-core==2.46.4
+pydantic==2.13.4
+PyYAML==6.0.3
+qrcode[pil]==8.2
+httpx==0.28.1
+pytest==9.1.1

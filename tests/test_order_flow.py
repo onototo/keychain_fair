@@ -1,0 +1,264 @@
+from dataclasses import replace
+import json
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from keychain_fair.adapters import CuraEngineSlicer, NullNotifier, OctoPrintController
+from tests.support import (
+    ADMIN_HEADERS,
+    create_paid_order,
+    create_test_app,
+    create_unpaid_order,
+    make_settings,
+    order_payload,
+    ready_printer,
+)
+
+
+def queue_app(settings):
+    return create_test_app(
+        settings,
+        slicer=CuraEngineSlicer(settings),
+        printer=OctoPrintController(settings),
+        notifier=NullNotifier(),
+    )
+
+
+def test_startup_attempts_printer_connection(tmp_path):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    printer = ready_printer(settings)
+    app = create_test_app(settings, printer=printer)
+
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert printer.ensure_calls == 1
+
+
+def test_prepare_recovers_paid_order_marked_printing_before_generation(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        order_id = create_paid_order(client, "printing-before-generation")
+        app.state.database.update_order_status(order_id, "printing")
+
+        queue = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS)
+        order = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"][0]
+
+    assert queue.status_code == 200
+    assert queue.json()["recovered_orders"]["order_ids"] == [order_id]
+    assert queue.json()["generation"]["generated"] == 1
+    assert queue.json()["batching"]["batches_created"] == 1
+    assert order["status"] == "queued"
+    assert order["batch_id"] is not None
+    assert Path(order["stl_path"]).exists()
+
+
+def test_admin_cannot_manually_mark_order_printing(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        order_id = create_paid_order(client, "manual-printing-blocked")
+        response = client.post(
+            f"/api/admin/orders/{order_id}/status",
+            headers=ADMIN_HEADERS,
+            json={"status": "printing"},
+        )
+
+    assert response.status_code == 422
+    assert "can not be set manually" in json.dumps(response.json())
+
+
+def test_order_flow_prepares_stl_and_batch_without_printing(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        assert client.get("/api/designs").status_code == 200
+        order_id = create_paid_order(client)
+
+        duplicate = client.post("/api/orders", json=order_payload(idempotency_key="test-order-flow-1"))
+        assert duplicate.status_code == 201
+        assert duplicate.json()["order"]["id"] == order_id
+
+        queue = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS)
+        assert queue.status_code == 200
+        assert queue.json()["generation"]["generated"] == 1
+        assert queue.json()["batching"]["batches_created"] == 1
+
+        public_current = client.get(f"/api/orders/{order_id}").json()["order"]
+        current_orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+
+    assert "stl_path" not in public_current
+    assert len(current_orders) == 1
+    current = current_orders[0]
+    assert current["status"] == "queued"
+    assert Path(current["stl_path"]).exists()
+    assert current["gcode_path"] is None
+
+
+def test_unpaid_order_is_not_prepared_or_placed_on_bed(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        order_id = create_unpaid_order(client, "fresh-unpaid-order")
+        queue = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS)
+        orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+        batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+
+    assert queue.status_code == 200
+    assert queue.json()["generation"]["generated"] == 0
+    assert queue.json()["batching"]["batches_created"] == 0
+    assert batches == []
+    order = next(item for item in orders if item["id"] == order_id)
+    assert order["status"] == "unpaid"
+    assert order["batch_id"] is None
+    assert order["stl_path"] is None
+
+
+def test_marking_queued_order_unpaid_invalidates_bed_and_rebuilds_without_it(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        unpaid_id = create_paid_order(client, "will-become-unpaid")
+        paid_id = create_paid_order(client, "stays-paid")
+        first = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        old_batch_id = first["batching"]["batches"][0]["id"]
+
+        unpaid = client.post(
+            f"/api/admin/orders/{unpaid_id}/status",
+            headers=ADMIN_HEADERS,
+            json={"status": "unpaid"},
+        )
+        rebuilt = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+        batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+
+    active_batches = [item for item in batches if item["status"] == "queued"]
+    old_batch = next(item for item in batches if item["id"] == old_batch_id)
+    by_id = {order["id"]: order for order in orders}
+
+    assert unpaid.status_code == 200
+    assert unpaid.json()["order"]["status"] == "unpaid"
+    assert unpaid.json()["order"]["batch_id"] is None
+    assert old_batch["status"] == "error"
+    assert rebuilt["batching"]["batches_created"] == 1
+    assert len(active_batches) == 1
+    assert [item["order_id"] for item in active_batches[0]["items"]] == [paid_id]
+    assert all(item["status"] != "unpaid" for item in active_batches[0]["items"])
+    assert by_id[unpaid_id]["status"] == "unpaid"
+    assert by_id[paid_id]["status"] == "queued"
+
+
+def test_delete_order_archives_and_removes_from_active_bed(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        deleted_order_id = create_paid_order(client, "delete-removes-from-bed")
+        remaining_order_id = create_paid_order(client, "delete-keeps-other-orders")
+        prepared = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        batch_id = prepared["batching"]["batches"][0]["id"]
+
+        deleted = client.delete(f"/api/admin/orders/{deleted_order_id}", headers=ADMIN_HEADERS)
+        assert deleted.status_code == 200
+        assert deleted.json()["order"]["archived_at"] is not None
+        assert deleted.json()["order"]["batch_id"] is None
+
+        active_orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+        batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+        rebuilt = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        rebuilt_batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+
+    assert [order["id"] for order in active_orders] == [remaining_order_id]
+    assert active_orders[0]["status"] == "stl_ready"
+    assert active_orders[0]["batch_id"] is None
+    batch = next(item for item in batches if item["id"] == batch_id)
+    assert batch["status"] == "error"
+    assert batch["items"][0]["order_id"] == deleted_order_id
+    assert batch["items"][0]["archived_at"] is not None
+    assert rebuilt["batching"]["batches_created"] == 1
+    active_batches = [item for item in rebuilt_batches if item["status"] == "queued"]
+    assert len(active_batches) == 1
+    assert [item["order_id"] for item in active_batches[0]["items"]] == [remaining_order_id]
+    assert all(item["order_id"] != deleted_order_id for item in active_batches[0]["items"])
+
+
+def test_admin_pin_required(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/api/admin/orders")
+
+    assert response.status_code == 401
+
+
+def test_system_info_prefers_lan_address_for_qr(tmp_path, monkeypatch):
+    monkeypatch.setattr("keychain_fair.main.local_ipv4_addresses", lambda: ["192.168.0.50", "127.0.0.1"])
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/api/system/info")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["site_url"] == "http://192.168.0.50:8080/"
+    assert payload["admin_url"] == "http://192.168.0.50:8080/admin"
+    assert "http://127.0.0.1:8080/" in payload["fallback_urls"]
+
+
+def test_system_info_uses_public_url_for_stable_qr(tmp_path, monkeypatch):
+    monkeypatch.setattr("keychain_fair.main.local_ipv4_addresses", lambda: ["192.168.0.50", "127.0.0.1"])
+    settings = replace(make_settings(tmp_path), public_url="http://192.168.137.1:8080")
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/api/system/info")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["site_url"] == "http://192.168.137.1:8080/"
+    assert payload["admin_url"] == "http://192.168.137.1:8080/admin"
+    assert payload["wifi_ssid"] == "KeychainFair"
+    assert payload["qr"] == {
+        "wifi": "/static/qr/customer_wifi.png",
+        "order": "/static/qr/customer_order.png",
+        "admin": "/static/qr/admin.png",
+    }
+    assert payload["site_qr"].startswith("data:image/png;base64,")
+    assert payload["admin_qr"].startswith("data:image/png;base64,")
+    assert payload["wifi_qr"].startswith("data:image/png;base64,")
+
+
+def test_admin_pin_rate_limit_escalates_after_failed_attempts(tmp_path, monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr("keychain_fair.main.time.monotonic", lambda: now)
+
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        assert client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"}).status_code == 401
+        assert client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"}).status_code == 401
+
+        locked = client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"})
+        assert locked.status_code == 429
+        assert locked.json()["detail"]["retry_after_seconds"] == 60
+
+        still_locked = client.get("/api/admin/orders", headers=ADMIN_HEADERS)
+        assert still_locked.status_code == 429
+
+        now += 61
+        assert client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"}).status_code == 401
+        assert client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"}).status_code == 401
+
+        locked_again = client.get("/api/admin/orders", headers={"X-Admin-Pin": "bad"})
+        assert locked_again.status_code == 429
+        assert locked_again.json()["detail"]["retry_after_seconds"] == 15 * 60

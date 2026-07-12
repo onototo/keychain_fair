@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Брелок на заказ</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Брелок на заказ</h1>
+          <span>3D-печать на ярмарке</span>
+        </div>
+        <a href="/admin" class="muted small">Оператор</a>
+      </header>
+
+      <section class="grid">
+        <form id="orderForm" class="panel">
+          <div class="panel-head">
+            <h2>Заказ</h2>
+            <span id="price" class="pill">0</span>
+          </div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>
+                Имя
+                <input
+                  name="customer_name"
+                  autocomplete="name"
+                  required
+                  minlength="2"
+                  maxlength="30"
+                  pattern="[A-Za-zА-Яа-яЁёІіЇїЄєЎўҐґ ]{2,30}"
+                  title="Только буквы латиницы/кириллицы, до 30 символов"
+                />
+              </label>
+              <label>
+                Номер авто
+                <input
+                  name="car_number"
+                  minlength="7"
+                  maxlength="9"
+                  autocapitalize="characters"
+                  pattern="([ABEKMHOPCTYXАВЕКМНОРСТУХ][0-9]{3}[ABEKMHOPCTYXАВЕКМНОРСТУХ]{2}[0-9]{2,3}|[0-9]{4}[ABCEHIKMOPTXАВСЕНІКМОРТХ]{2}[1-7])"
+                  title="РФ: А123ВС77 или А123ВС777. РБ: 1234АВ7"
+                />
+              </label>
+              <label>
+                Телефон
+                <input
+                  name="phone"
+                  autocomplete="tel"
+                  inputmode="numeric"
+                  required
+                  minlength="11"
+                  maxlength="12"
+                  pattern="(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})"
+                  title="Только цифры. РФ: 79XXXXXXXXX или 89XXXXXXXXX, РБ: 37529XXXXXXX"
+                />
+              </label>
+            </div>
+
+            <div>
+              <div class="small muted">Дизайн</div>
+              <div id="designs" class="design-list"></div>
+            </div>
+
+            <label>
+              Размер
+              <select name="size_id" id="sizeSelect"></select>
+            </label>
+
+            <div>
+              <div class="small muted">Что печатаем</div>
+              <div id="elements" class="choices"></div>
+            </div>
+
+            <button type="submit">Подтвердить дизайн</button>
+          </div>
+        </form>
+
+      </section>
+
+      <section class="panel live-preview-panel">
+        <div class="panel-head">
+          <h2>Макет</h2>
+          <span id="designName" class="muted small"></span>
+        </div>
+        <div class="panel-body">
+          <div class="preview-wrap">
+            <div id="preview" class="keychain-preview">
+              <div class="keychain-hole"></div>
+              <div id="previewElements" class="preview-elements"></div>
+              <div id="previewStack" class="preview-stack"></div>
+              <div id="previewCar" class="preview-car">A123BC77</div>
+              <div id="previewPhone" class="preview-phone">375291234567</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="checkout-bar">
+        <div>
+          <div class="small muted">Проверьте макет перед отправкой</div>
+          <div class="checkout-title">Заказ появится у продавца после подтверждения</div>
+        </div>
+        <div class="checkout-actions">
+          <button id="submitOrderButton" class="submit-order" type="submit" form="orderForm">Подтвердить заказ</button>
+          <div id="message" class="message"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/index.js"></script>
+  </body>
+</html>

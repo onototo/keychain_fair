@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Панель кассира</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260712-cashier" />
+  </head>
+  <body class="cashier-page">
+    <main id="cashierLogin" class="cashier-login panel">
+      <div class="panel-head"><h1>Касса</h1></div>
+      <form id="cashierLoginForm" class="panel-body">
+        <label>PIN
+          <input id="cashierPin" type="password" inputmode="numeric" autocomplete="current-password" autofocus />
+        </label>
+        <button type="submit">Войти</button>
+        <div id="cashierLoginMessage" class="message" aria-live="polite"></div>
+      </form>
+    </main>
+
+    <main id="cashierApp" class="cashier-shell" hidden>
+      <header class="cashier-topbar">
+        <div>
+          <h1>Заказы</h1>
+          <span id="cashierCount" class="pill">0</span>
+        </div>
+        <button id="cashierLogout" class="secondary">Выйти</button>
+      </header>
+      <div id="cashierMessage" class="message" aria-live="polite"></div>
+      <section id="cashierOrders" class="cashier-orders" aria-live="polite"></section>
+    </main>
+
+    <dialog id="unpayDialog" class="cashier-dialog">
+      <form method="dialog">
+        <h2>Снять оплату?</h2>
+        <p>Вы уверены, что хотите перевести заказ <strong id="unpayOrderName"></strong> в неоплаченные?</p>
+        <div class="cashier-dialog-actions">
+          <button value="cancel" class="secondary">Отмена</button>
+          <button id="confirmUnpay" value="confirm" class="danger">Да, снять оплату</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/cashier.js?v=20260712-cashier"></script>
+  </body>
+</html>

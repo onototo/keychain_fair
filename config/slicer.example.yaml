@@ -1,0 +1,22 @@
+# Заполните этот файл под конкретный принтер перед включением slicing.
+printer:
+  name: Example FDM printer
+  bed_size_mm: [220, 220, 250]
+  nozzle_diameter_mm: 0.4
+
+material:
+  type: PLA
+  nozzle_temperature_c: 205
+  bed_temperature_c: 60
+
+quality:
+  layer_height_mm: 0.2
+  wall_line_count: 2
+  infill_percent: 12
+  print_speed_mm_s: 50
+
+cura_engine:
+  # CuraEngine CLI требует settings JSON/definition-файлы Cura.
+  # После установки Cura укажите путь к реальному settings JSON и дополнительные -s параметры.
+  settings_json_path: ""
+  extra_args: []

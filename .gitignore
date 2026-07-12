@@ -1,0 +1,11 @@
+.venv/
+.octoprint-venv/
+.env
+__pycache__/
+.pytest_cache/
+data/
+generated/
+downloads/
+octoprint/
+tmp/
+*.pyc

@@ -1,0 +1,18 @@
+{
+  "admin": {
+    "file": "admin.png",
+    "payload": "http://192.168.137.1:8080/admin",
+    "url": "http://192.168.137.1:8080/admin"
+  },
+  "order": {
+    "file": "customer_order.png",
+    "payload": "http://192.168.137.1:8080/",
+    "url": "http://192.168.137.1:8080/"
+  },
+  "version": 1,
+  "wifi": {
+    "file": "customer_wifi.png",
+    "payload": "WIFI:T:WPA;S:KeychainFair;P:fair2026;;",
+    "ssid": "KeychainFair"
+  }
+}
