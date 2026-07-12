@@ -16,6 +16,11 @@ from .models import OrderCreate
 
 CONTENT_SHAPES = {"name", "car", "phone"}
 LOOP_SHAPES = {"loop_left", "loop_right"}
+MAX_ACTIVE_UNPAID_ORDERS_PER_BUYER = 2
+
+
+class OrderLimitExceeded(ValueError):
+    pass
 
 
 def _filament_change_height(order_or_item: dict[str, Any], fallback: float) -> float:
@@ -45,11 +50,29 @@ class OrderService:
         self.notifier = notifier
         self._queue_lock = threading.Lock()
 
-    def create_order(self, payload: OrderCreate) -> dict[str, Any]:
+    def create_order(self, payload: OrderCreate, identity: dict[str, Any] | None = None) -> dict[str, Any]:
+        if payload.idempotency_key:
+            existing = self.database.get_order_by_idempotency_key(payload.idempotency_key)
+            if existing is not None:
+                return existing
+
         selection = self.catalog.validate_selection(payload.design_id, payload.size_id, payload.elements)
         self._validate_print_content(payload, selection)
+        self._validate_order_limit(payload, identity)
         model_params = model_params_for_selection(selection, self.settings.model.base_height_mm)
-        return self.database.create_order(payload.model_dump(), selection, model_params)
+        return self.database.create_order(payload.model_dump(), selection, model_params, identity)
+
+    def _validate_order_limit(self, payload: OrderCreate, identity: dict[str, Any] | None = None) -> None:
+        identity = identity or {}
+        active_count = self.database.count_active_unpaid_orders(
+            telegram_user_id=identity.get("telegram_user_id"),
+            phone=payload.phone,
+            client_ip=identity.get("client_ip"),
+        )
+        if active_count >= MAX_ACTIVE_UNPAID_ORDERS_PER_BUYER:
+            raise OrderLimitExceeded(
+                "У вас уже есть 2 неоплаченных заказа. Оплатите один из них у продавца, и можно будет создать новый."
+            )
 
     def _validate_print_content(self, payload: OrderCreate, selection: Any) -> None:
         if selection.design.get("layout") != "stacked_plate":

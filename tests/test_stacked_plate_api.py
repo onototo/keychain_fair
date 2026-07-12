@@ -3,12 +3,13 @@ from fastapi.testclient import TestClient
 from tests.support import create_test_app, make_settings, order_payload
 
 
-def create_stacked_order(client, *, elements, idempotency_key, car_number="A123BC77", size_id="standard"):
+def create_stacked_order(client, *, elements, idempotency_key, car_number="A123BC77", phone="375291234567", size_id="standard"):
     return client.post(
         "/api/orders",
         json=order_payload(
             customer_name="Nikita",
             car_number=car_number,
+            phone=phone,
             design_id="stacked_plate_classic",
             size_id=size_id,
             elements=elements,
@@ -78,10 +79,11 @@ def test_stacked_plate_size_presets_scale_dimensions(tmp_path):
             size_id: create_stacked_order(
                 client,
                 elements=["car", "loop_left"],
+                phone=f"37529123456{index}",
                 size_id=size_id,
                 idempotency_key=f"stacked-{size_id}-scale",
             ).json()["order"]
-            for size_id in ["compact", "standard", "large"]
+            for index, size_id in enumerate(["compact", "standard", "large"])
         }
 
     expected_scales = {"compact": 0.6, "standard": 0.75, "large": 0.9}

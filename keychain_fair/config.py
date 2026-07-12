@@ -72,6 +72,15 @@ class PrinterControlSettings:
 
 
 @dataclass(frozen=True)
+class TelegramSettings:
+    bot_token: str
+    webhook_secret: str
+    bot_username: str
+    webapp_url: str | None
+    init_data_max_age_seconds: int = 24 * 60 * 60
+
+
+@dataclass(frozen=True)
 class AppSettings:
     base_dir: Path
     host: str
@@ -90,6 +99,7 @@ class AppSettings:
     model: ModelSettings
     octoprint: OctoPrintSettings
     printer_control: PrinterControlSettings
+    telegram: TelegramSettings
     worker_poll_seconds: int
 
     def ensure_directories(self) -> None:
@@ -159,6 +169,12 @@ def load_settings(base_dir: Path | None = None) -> AppSettings:
         printer_control=PrinterControlSettings(
             bed_preheat_c=int(printer_control.get("bed_preheat_c", 60)),
             hotend_preheat_c=int(printer_control.get("hotend_preheat_c", 200)),
+        ),
+        telegram=TelegramSettings(
+            bot_token=str(os.environ.get("TELEGRAM_BOT_TOKEN") or ""),
+            webhook_secret=str(os.environ.get("TELEGRAM_WEBHOOK_SECRET") or ""),
+            bot_username=str(os.environ.get("TELEGRAM_BOT_USERNAME") or "").lstrip("@"),
+            webapp_url=(os.environ.get("TELEGRAM_WEBAPP_URL") or None),
         ),
         worker_poll_seconds=int(worker.get("poll_seconds", 3)),
     )

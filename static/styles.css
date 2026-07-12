@@ -1086,6 +1086,98 @@ label {
   }
 }
 
+@media (max-width: 540px) {
+  .shell {
+    width: min(100% - 20px, 520px);
+    padding: 12px 0 calc(112px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .brand h1 {
+    font-size: 25px;
+    line-height: 1.1;
+  }
+
+  .brand span,
+  .small {
+    font-size: 12px;
+  }
+
+  .panel-head,
+  .panel-body {
+    padding: 12px;
+  }
+
+  input,
+  select,
+  button,
+  a.button-link {
+    min-height: 46px;
+  }
+
+  .design-option {
+    padding: 10px;
+  }
+
+  .choice {
+    min-height: 42px;
+    border-radius: 8px;
+  }
+
+  .loop-choice-group {
+    width: 100%;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .preview-wrap {
+    min-height: 210px;
+    padding: 14px;
+  }
+
+  .keychain-preview {
+    width: min(100%, 360px);
+    padding: 14px 34px;
+  }
+
+  .keychain-preview.stepped {
+    padding: 0 28px;
+  }
+
+  .keychain-preview.stepped .preview-stack {
+    min-height: 86px;
+  }
+
+  .checkout-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    gap: 10px;
+    margin: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .checkout-title {
+    font-size: 14px;
+  }
+
+  .submit-order {
+    min-height: 50px;
+    font-size: 16px;
+  }
+}
+
 /* Cashier-only tablet interface. */
 .cashier-page {
   background: #eef4f3;

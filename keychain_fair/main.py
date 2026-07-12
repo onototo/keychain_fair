@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import ipaddress
 import logging
 from pathlib import Path
 import secrets
@@ -27,8 +28,9 @@ from .editor import (
 )
 from .models import OrderCreate, PaymentStatusUpdate, StatusUpdate
 from .network import local_ipv4_addresses, qr_data_uri, wifi_qr_payload
-from .services import OrderService
+from .services import OrderLimitExceeded, OrderService
 from .statistics import XLSX_MEDIA_TYPE, build_statistics_workbook
+from .telegram import TelegramAuthError, TelegramNotifier, TelegramUpdateHandler, telegram_deep_link, validate_init_data
 from .worker import worker_loop
 
 
@@ -37,7 +39,19 @@ logger = logging.getLogger(__name__)
 
 def _public_order(order: dict[str, Any]) -> dict[str, Any]:
     public = dict(order)
-    for key in ["stl_path", "wrapper_scad_path", "gcode_path", "batch_id", "model_params"]:
+    for key in [
+        "stl_path",
+        "wrapper_scad_path",
+        "gcode_path",
+        "batch_id",
+        "model_params",
+        "telegram_user_id",
+        "telegram_username",
+        "telegram_first_name",
+        "telegram_last_name",
+        "telegram_ready_notified_at",
+        "client_ip",
+    ]:
         public.pop(key, None)
     return public
 
@@ -74,6 +88,39 @@ def _seconds(value: Any) -> int | None:
     if number is None:
         return None
     return max(0, int(number))
+
+
+def _is_local_peer(host: str | None) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _valid_ip_or_empty(value: str) -> str:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return ""
+    return value
+
+
+def _trusted_client_ip(request: Request) -> str:
+    direct_host = request.client.host if request.client else ""
+    if _is_local_peer(direct_host):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            first_ip = forwarded.split(",", 1)[0].strip()
+            if first_ip:
+                return _valid_ip_or_empty(first_ip)
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return _valid_ip_or_empty(real_ip)
+    return _valid_ip_or_empty(direct_host)
 
 
 def _temperature_rows(printer_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -214,8 +261,11 @@ def create_app(
     model_generator = generator or OpenScadModelGenerator(app_settings)
     cura_slicer = slicer or CuraEngineSlicer(app_settings)
     print_controller = printer or OctoPrintController(app_settings)
-    app_notifier = notifier or NullNotifier()
+    app_notifier = notifier if notifier is not None else (
+        TelegramNotifier(app_settings, database) if app_settings.telegram.bot_token else NullNotifier()
+    )
     service = OrderService(app_settings, database, catalog, model_generator, cura_slicer, print_controller, app_notifier)
+    telegram_updates = TelegramUpdateHandler(app_settings)
     admin_pin_attempts: dict[str, AdminPinAttempt] = {}
 
     @asynccontextmanager
@@ -362,12 +412,46 @@ def create_app(
         return {"designs": catalog.load_public_designs()}
 
     @app.post("/api/orders", status_code=201)
-    def create_order(payload: OrderCreate) -> dict[str, Any]:
+    def create_order(request: Request, payload: OrderCreate) -> dict[str, Any]:
+        identity: dict[str, Any] = {"client_ip": _trusted_client_ip(request)}
+        if payload.telegram_init_data:
+            try:
+                telegram_identity = validate_init_data(
+                    payload.telegram_init_data,
+                    app_settings.telegram.bot_token,
+                    app_settings.telegram.init_data_max_age_seconds,
+                )
+            except TelegramAuthError as exc:
+                raise HTTPException(status_code=401, detail=str(exc)) from exc
+            identity.update(telegram_identity.metadata())
+
         try:
-            order = service.create_order(payload)
+            order = service.create_order(payload, identity)
         except DesignCatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OrderLimitExceeded as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "60"}) from exc
         return {"order": _public_order(order)}
+
+    @app.post("/api/telegram/webhook")
+    async def telegram_webhook(
+        request: Request,
+        x_telegram_secret: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
+    ) -> dict[str, Any]:
+        if not app_settings.telegram.bot_token or not app_settings.telegram.webhook_secret:
+            raise HTTPException(status_code=503, detail="Telegram bot is not configured")
+        if not x_telegram_secret or not secrets.compare_digest(x_telegram_secret, app_settings.telegram.webhook_secret):
+            raise HTTPException(status_code=401, detail="Invalid Telegram webhook secret")
+
+        try:
+            update = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid Telegram update") from exc
+
+        result = telegram_updates.handle(update if isinstance(update, dict) else {})
+        if not result.success:
+            logger.warning(result.message)
+        return {"ok": True}
 
     @app.get("/api/orders/{order_id}")
     def get_order(order_id: str) -> dict[str, Any]:
@@ -563,7 +647,16 @@ def create_app(
         preferred = next((address for address in addresses if not address.startswith("127.")), "127.0.0.1")
         site_url = configured_url.rstrip("/") + "/" if configured_url else f"http://{preferred}:{app_settings.port}/"
         admin_url = f"{site_url.rstrip('/')}/admin"
+        telegram_url = telegram_deep_link(app_settings)
         wifi_payload = wifi_qr_payload(app_settings.wifi_ssid, app_settings.wifi_password)
+        qr_paths = {
+            "wifi": "/static/qr/customer_wifi.png",
+            "order": "/static/qr/customer_order.png",
+            "admin": "/static/qr/admin.png",
+        }
+        if telegram_url:
+            qr_paths["telegram"] = "/static/qr/customer_telegram.png"
+
         return {
             "addresses": addresses,
             "fallback_urls": fallback_urls,
@@ -571,13 +664,11 @@ def create_app(
             "admin_url": admin_url,
             "site_qr": qr_data_uri(site_url),
             "admin_qr": qr_data_uri(admin_url),
+            "telegram_url": telegram_url,
+            "telegram_qr": qr_data_uri(telegram_url) if telegram_url else None,
             "wifi_ssid": app_settings.wifi_ssid,
             "wifi_qr": qr_data_uri(wifi_payload),
-            "qr": {
-                "wifi": "/static/qr/customer_wifi.png",
-                "order": "/static/qr/customer_order.png",
-                "admin": "/static/qr/admin.png",
-            },
+            "qr": qr_paths,
         }
 
     return app

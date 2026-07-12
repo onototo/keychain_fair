@@ -11,6 +11,7 @@ from keychain_fair.config import (
     PROJECT_ROOT,
     QueueSettings,
     SlicerSettings,
+    TelegramSettings,
     ToolSettings,
 )
 from keychain_fair.main import create_app
@@ -145,6 +146,12 @@ def make_settings(
             api_key="fake-key" if octoprint_enabled else "",
         ),
         printer_control=PrinterControlSettings(bed_preheat_c=60),
+        telegram=TelegramSettings(
+            bot_token="",
+            webhook_secret="",
+            bot_username="",
+            webapp_url=None,
+        ),
         worker_poll_seconds=3600,
     )
 

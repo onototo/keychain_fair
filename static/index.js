@@ -32,6 +32,31 @@ const PHONE_RE = /^(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})$/;
 const CONTENT_IDS = ["name", "car", "phone"];
 const LOOP_SIDE_IDS = ["loop_left", "loop_right"];
 
+function telegramWebApp() {
+  return window.Telegram?.WebApp || null;
+}
+
+function initTelegramWebApp() {
+  const app = telegramWebApp();
+  if (!app) return;
+  document.body.classList.add("telegram-webapp");
+  app.ready();
+  app.expand();
+}
+
+function telegramInitData() {
+  return telegramWebApp()?.initData || "";
+}
+
+function responseErrorMessage(result, fallback) {
+  if (typeof result?.detail === "string") return result.detail;
+  if (Array.isArray(result?.detail)) {
+    return result.detail.map((item) => item.msg || item.message || String(item)).join("; ");
+  }
+  if (result?.detail?.message) return result.detail.message;
+  return fallback;
+}
+
 function selectedDesign() {
   return state.designs.find((item) => item.id === state.selectedDesignId) || state.designs[0];
 }
@@ -479,6 +504,10 @@ form.addEventListener("submit", async (event) => {
     elements: checkedElementIds(),
     idempotency_key: currentOrderKey(),
   };
+  const initData = telegramInitData();
+  if (initData) {
+    payload.telegram_init_data = initData;
+  }
 
   try {
     const response = await fetch("/api/orders", {
@@ -488,7 +517,7 @@ form.addEventListener("submit", async (event) => {
     });
     const result = await response.json();
     if (!response.ok) {
-      throw new Error(result.detail || "Заказ не создан");
+      throw new Error(responseErrorMessage(result, "Заказ не создан"));
     }
     resetOrderKey();
     window.location.href = `/status/${result.order.id}`;
@@ -498,6 +527,9 @@ form.addEventListener("submit", async (event) => {
     setSubmitting(false);
   }
 });
+
+initTelegramWebApp();
+window.addEventListener("load", initTelegramWebApp);
 
 loadDesigns().catch((error) => {
   messageNode.textContent = error.message;

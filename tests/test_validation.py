@@ -18,6 +18,16 @@ def test_name_rejects_digits_and_long_values():
         normalize_customer_name("А" * 31)
 
 
+def test_name_rejects_profanity_but_accepts_normal_names():
+    with pytest.raises(ValueError):
+        normalize_customer_name("Fuck")
+    with pytest.raises(ValueError):
+        normalize_customer_name("Хуев")
+
+    assert normalize_customer_name("Глеб") == "Глеб"
+    assert normalize_customer_name("Anna Maria") == "Anna Maria"
+
+
 def test_car_number_rejects_unknown_format():
     with pytest.raises(ValueError):
         normalize_car_number("AB1234")

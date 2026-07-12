@@ -16,6 +16,7 @@ class OrderCreate(BaseModel):
     size_id: str
     elements: list[str] = Field(default_factory=list, max_length=6)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=96)
+    telegram_init_data: str | None = Field(default=None, max_length=4096)
 
     @field_validator("customer_name")
     @classmethod
@@ -55,6 +56,14 @@ class OrderCreate(BaseModel):
         if any(char not in allowed for char in cleaned):
             raise ValueError("idempotency_key may only contain letters, numbers, '-' and '_'")
         return cleaned
+
+    @field_validator("telegram_init_data")
+    @classmethod
+    def validate_telegram_init_data(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class StatusUpdate(BaseModel):

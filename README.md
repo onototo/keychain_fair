@@ -18,6 +18,33 @@ python -m venv .venv
 
 PIN оператора задается в `.env` переменной `ADMIN_PIN`.
 
+## Онлайн через Telegram
+
+Wi-Fi hotspot остается запасным офлайн-сценарием. Для онлайн-теста поднимите приложение на ноутбуке как обычно, откройте HTTPS-туннель к `http://127.0.0.1:8080` через Cloudflare Tunnel или ngrok и пропишите в `.env`:
+
+```powershell
+PUBLIC_URL=https://your-tunnel.example
+TELEGRAM_BOT_TOKEN=123456:token
+TELEGRAM_WEBHOOK_SECRET=long-random-secret
+TELEGRAM_BOT_USERNAME=your_bot
+TELEGRAM_WEBAPP_URL=https://your-tunnel.example/
+```
+
+Онлайн-сервер без hotspot можно запустить отдельным батником:
+
+```powershell
+.\start_online_server.bat
+```
+
+После смены `PUBLIC_URL` обновите QR и webhook:
+
+```powershell
+.\.venv\Scripts\python scripts\generate_static_qr.py
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Set-TelegramWebhook.ps1
+```
+
+Покупательский Telegram QR создается отдельно как `static/qr/customer_telegram.png`; локальные Wi-Fi QR остаются для fallback.
+
 ## Внешние инструменты
 
 MVP работает без установленного OpenSCAD/Cura/OctoPrint, но в этом режиме после оплаты заказ перейдет в `error` с диагностикой отсутствующего инструмента. Для реальной печати нужно:
@@ -35,4 +62,3 @@ MVP работает без установленного OpenSCAD/Cura/OctoPrint
 ```powershell
 .\.venv\Scripts\python -m pytest
 ```
-

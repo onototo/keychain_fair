@@ -66,10 +66,11 @@ def build_manifest(root: Path = PROJECT_ROOT) -> dict[str, Any]:
     ssid = env_value(dotenv, "KEYCHAIN_WIFI_SSID", "KeychainFair")
     password = env_value(dotenv, "KEYCHAIN_WIFI_PASSWORD", "fair2026")
     public_url = env_value(dotenv, "PUBLIC_URL", f"http://{gateway}:8080").rstrip("/")
+    telegram_bot_username = env_value(dotenv, "TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
     order_url = f"{public_url}/"
     admin_url = f"{public_url}/admin"
 
-    return {
+    manifest = {
         "version": 1,
         "wifi": {
             "file": "customer_wifi.png",
@@ -87,6 +88,14 @@ def build_manifest(root: Path = PROJECT_ROOT) -> dict[str, Any]:
             "payload": admin_url,
         },
     }
+    if telegram_bot_username:
+        telegram_url = f"https://t.me/{telegram_bot_username}?start=order"
+        manifest["telegram"] = {
+            "file": "customer_telegram.png",
+            "url": telegram_url,
+            "payload": telegram_url,
+        }
+    return manifest
 
 
 def generate_qr_assets(root: Path = PROJECT_ROOT) -> dict[str, Any]:
@@ -94,7 +103,9 @@ def generate_qr_assets(root: Path = PROJECT_ROOT) -> dict[str, Any]:
     qr_dir = root / "static" / "qr"
     qr_dir.mkdir(parents=True, exist_ok=True)
 
-    for key in ["wifi", "order", "admin"]:
+    for key in ["wifi", "order", "admin", "telegram"]:
+        if key not in manifest:
+            continue
         item = manifest[key]
         write_if_changed(qr_dir / item["file"], png_bytes(item["payload"]))
 
@@ -113,6 +124,8 @@ def main() -> int:
     print(f"Wi-Fi SSID: {manifest['wifi']['ssid']}")
     print(f"Order URL: {manifest['order']['url']}")
     print(f"Admin URL: {manifest['admin']['url']}")
+    if "telegram" in manifest:
+        print(f"Telegram URL: {manifest['telegram']['url']}")
     return 0
 
 

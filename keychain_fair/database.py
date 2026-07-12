@@ -112,6 +112,12 @@ class Database:
                     paid_at TEXT,
                     ready_for_pickup_at TEXT,
                     archived_at TEXT,
+                    telegram_user_id TEXT,
+                    telegram_username TEXT,
+                    telegram_first_name TEXT,
+                    telegram_last_name TEXT,
+                    client_ip TEXT,
+                    telegram_ready_notified_at TEXT,
                     stl_path TEXT,
                     wrapper_scad_path TEXT,
                     batch_id TEXT,
@@ -162,6 +168,16 @@ class Database:
                     """,
                     (statuses.READY_FOR_PICKUP,),
                 )
+            for column in [
+                "telegram_user_id",
+                "telegram_username",
+                "telegram_first_name",
+                "telegram_last_name",
+                "client_ip",
+                "telegram_ready_notified_at",
+            ]:
+                if column not in order_columns:
+                    conn.execute(f"ALTER TABLE orders ADD COLUMN {column} TEXT")
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key
@@ -169,8 +185,20 @@ class Database:
                     WHERE idempotency_key IS NOT NULL
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_orders_unpaid_identity
+                    ON orders(status, paid_at, telegram_user_id, phone, client_ip)
+                """
+            )
 
-    def create_order(self, payload: dict[str, Any], selection: Any, model_params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def create_order(
+        self,
+        payload: dict[str, Any],
+        selection: Any,
+        model_params: dict[str, Any] | None = None,
+        identity: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         idempotency_key = payload.get("idempotency_key") or None
         if idempotency_key:
             existing = self.get_order_by_idempotency_key(idempotency_key)
@@ -190,6 +218,7 @@ class Database:
             font_size_mm = float(car_block.get("font_size_mm", size["font_size_mm"]))
         else:
             font_size_mm = float(size["font_size_mm"]) * scale
+        identity = identity or {}
 
         try:
             with self.connect() as conn:
@@ -198,9 +227,10 @@ class Database:
                     INSERT INTO orders (
                         id, idempotency_key, customer_name, car_number, phone, design_id, design_name,
                         size_id, size_label, width_mm, height_mm, thickness_mm, font_size_mm,
-                        selected_elements_json, model_params_json, status, created_at, updated_at
+                        selected_elements_json, model_params_json, status, created_at, updated_at,
+                        telegram_user_id, telegram_username, telegram_first_name, telegram_last_name, client_ip
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         order_id,
@@ -221,6 +251,11 @@ class Database:
                         statuses.UNPAID,
                         created,
                         created,
+                        identity.get("telegram_user_id"),
+                        identity.get("telegram_username"),
+                        identity.get("telegram_first_name"),
+                        identity.get("telegram_last_name"),
+                        identity.get("client_ip"),
                     ),
                 )
         except sqlite3.IntegrityError:
@@ -242,6 +277,41 @@ class Database:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM orders WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
         return self._order_from_row(row) if row is not None else None
+
+    def count_active_unpaid_orders(
+        self,
+        *,
+        telegram_user_id: str | None = None,
+        phone: str | None = None,
+        client_ip: str | None = None,
+    ) -> int:
+        conditions: list[str] = []
+        args: list[Any] = []
+        if telegram_user_id:
+            conditions.append("telegram_user_id = ?")
+            args.append(telegram_user_id)
+        if phone:
+            conditions.append("phone = ?")
+            args.append(phone)
+        if client_ip:
+            conditions.append("client_ip = ?")
+            args.append(client_ip)
+        if not conditions:
+            return 0
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM orders
+                WHERE archived_at IS NULL
+                  AND status = ?
+                  AND paid_at IS NULL
+                  AND ({" OR ".join(conditions)})
+                """,
+                [statuses.UNPAID, *args],
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
 
     def list_orders(self, status: str | None = None, include_archived: bool = False) -> list[dict[str, Any]]:
         query = "SELECT * FROM orders"
@@ -298,6 +368,21 @@ class Database:
                 WHERE id = ?
                 """,
                 args,
+            )
+            if conn.total_changes == 0:
+                raise KeyError(order_id)
+        return self.get_order(order_id)
+
+    def mark_telegram_ready_notified(self, order_id: str) -> dict[str, Any]:
+        updated = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE orders
+                SET telegram_ready_notified_at = COALESCE(telegram_ready_notified_at, ?)
+                WHERE id = ?
+                """,
+                (updated, order_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(order_id)
