@@ -51,10 +51,33 @@ class OrderCreate(BaseModel):
         cleaned = value.strip()
         if not cleaned:
             return None
-        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:")
         if any(char not in allowed for char in cleaned):
-            raise ValueError("idempotency_key may only contain letters, numbers, '-' and '_'")
+            raise ValueError("idempotency_key may only contain letters, numbers, '-', '_' and ':'")
         return cleaned
+
+
+class InternalOrderCreate(OrderCreate):
+    source: str = Field(default="telegram", max_length=24)
+    telegram_chat_id: str | None = Field(default=None, max_length=32)
+    telegram_user_id: str | None = Field(default=None, max_length=32)
+    telegram_username: str | None = Field(default=None, max_length=64)
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned not in {"telegram", "web"}:
+            raise ValueError("source must be 'telegram' or 'web'")
+        return cleaned
+
+    @field_validator("telegram_chat_id", "telegram_user_id", "telegram_username")
+    @classmethod
+    def clean_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class StatusUpdate(BaseModel):

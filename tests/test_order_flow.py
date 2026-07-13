@@ -100,6 +100,43 @@ def test_order_flow_prepares_stl_and_batch_without_printing(tmp_path):
     assert current["gcode_path"] is None
 
 
+def test_internal_order_requires_token_and_stores_telegram_metadata(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+    payload = {
+        **order_payload(idempotency_key="tg:42:draft1"),
+        "source": "telegram",
+        "telegram_chat_id": "42",
+        "telegram_user_id": "7",
+        "telegram_username": "anna",
+    }
+
+    with TestClient(app) as client:
+        blocked = client.post("/api/internal/orders", json=payload)
+        created = client.post(
+            "/api/internal/orders",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json=payload,
+        )
+        duplicate = client.post(
+            "/api/internal/orders",
+            headers={"X-Internal-Token": "test-internal-token"},
+            json=payload,
+        )
+        admin_orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+
+    assert blocked.status_code == 401
+    assert created.status_code == 201
+    assert duplicate.status_code == 201
+    assert duplicate.json()["order"]["id"] == created.json()["order"]["id"]
+    assert "telegram_chat_id" not in created.json()["order"]
+    order = admin_orders[0]
+    assert order["source"] == "telegram"
+    assert order["telegram_chat_id"] == "42"
+    assert order["telegram_user_id"] == "7"
+    assert order["telegram_username"] == "anna"
+
+
 def test_unpaid_order_is_not_prepared_or_placed_on_bed(tmp_path):
     settings = make_settings(tmp_path)
     app = queue_app(settings)

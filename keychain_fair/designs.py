@@ -39,6 +39,8 @@ class DesignCatalog:
             public_design.pop("source", None)
             public_design.pop("template_path", None)
             public_design.pop("template_available", None)
+            public_design.pop("preview_image_path", None)
+            public_design.pop("preview_image_available", None)
             public_designs.append(public_design)
         return public_designs
 
@@ -92,6 +94,10 @@ class DesignCatalog:
         design.setdefault("accent", "#3b82f6")
         design.setdefault("elements", [])
         design.setdefault("default_elements", [])
+        preview_url, preview_path = self._preview_image(raw)
+        design["preview_image"] = preview_url
+        design["preview_image_path"] = str(preview_path)
+        design["preview_image_available"] = preview_path.exists()
 
         for size in design["sizes"]:
             for key in ["id", "label", "width_mm", "height_mm", "thickness_mm", "font_size_mm"]:
@@ -110,3 +116,22 @@ class DesignCatalog:
                 f"{source_path.name} default_elements contains unknown ids: {', '.join(unknown_defaults)}"
             )
         return design
+
+    def _preview_image(self, raw: dict[str, Any]) -> tuple[str, Path]:
+        configured = str(raw.get("preview_image") or "").strip()
+        static_root = self.designs_dir.parent / "static"
+
+        if configured:
+            if configured.startswith("/static/"):
+                return configured, self.designs_dir.parent / configured.lstrip("/")
+            if configured.startswith("/"):
+                return configured, self.designs_dir.parent / configured.lstrip("/")
+            return f"/static/design-previews/{configured}", static_root / "design-previews" / configured
+
+        design_id = str(raw.get("id") or "fallback")
+        candidate = static_root / "design-previews" / f"{design_id}.png"
+        if candidate.exists():
+            return f"/static/design-previews/{design_id}.png", candidate
+
+        fallback = static_root / "design-previews" / "fallback.png"
+        return "/static/design-previews/fallback.png", fallback

@@ -3,9 +3,26 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import sqlite3
 import uuid
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
+
+from sqlalchemy import (
+    Column,
+    Float,
+    ForeignKey,
+    Index,
+    MetaData,
+    String,
+    Table,
+    Text,
+    and_,
+    create_engine,
+    inspect,
+    select,
+    text,
+)
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 
 from . import statuses
 from .editor import final_dimensions_mm
@@ -13,6 +30,75 @@ from .editor import final_dimensions_mm
 
 CONTENT_SHAPES = {"name", "car", "phone"}
 DEFAULT_MODEL_SCALE = 1.0
+
+metadata = MetaData()
+
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("idempotency_key", String),
+    Column("customer_name", String, nullable=False),
+    Column("car_number", String, nullable=False),
+    Column("phone", String, nullable=False),
+    Column("design_id", String, nullable=False),
+    Column("design_name", String, nullable=False),
+    Column("size_id", String, nullable=False),
+    Column("size_label", String, nullable=False),
+    Column("width_mm", Float, nullable=False),
+    Column("height_mm", Float, nullable=False),
+    Column("thickness_mm", Float, nullable=False),
+    Column("font_size_mm", Float, nullable=False),
+    Column("selected_elements_json", Text, nullable=False),
+    Column("model_params_json", Text),
+    Column("status", String, nullable=False),
+    Column("source", String),
+    Column("telegram_chat_id", String),
+    Column("telegram_user_id", String),
+    Column("telegram_username", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("paid_at", String),
+    Column("ready_for_pickup_at", String),
+    Column("archived_at", String),
+    Column("stl_path", Text),
+    Column("wrapper_scad_path", Text),
+    Column("batch_id", String),
+    Column("gcode_path", Text),
+    Column("error_message", Text),
+)
+
+print_batches = Table(
+    "print_batches",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("status", String, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("manifest_path", Text),
+    Column("plate_scad_path", Text),
+    Column("plate_stl_path", Text),
+    Column("gcode_path", Text),
+    Column("error_message", Text),
+)
+
+print_batch_items = Table(
+    "print_batch_items",
+    metadata,
+    Column("batch_id", String, ForeignKey("print_batches.id", ondelete="CASCADE"), primary_key=True),
+    Column("order_id", String, ForeignKey("orders.id", ondelete="CASCADE"), primary_key=True),
+    Column("position_x_mm", Float, nullable=False),
+    Column("position_y_mm", Float, nullable=False),
+)
+
+Index("idx_orders_status_created", orders.c.status, orders.c.created_at)
+Index(
+    "idx_orders_idempotency_key",
+    orders.c.idempotency_key,
+    unique=True,
+    sqlite_where=orders.c.idempotency_key.is_not(None),
+    postgresql_where=orders.c.idempotency_key.is_not(None),
+)
 
 
 def now_iso() -> str:
@@ -75,100 +161,93 @@ def _selected_dimensions(selection: Any) -> tuple[float, float]:
     return width * scale, height * scale
 
 
-class Database:
-    def __init__(self, database_path: Path):
-        self.database_path = database_path
+def _sqlite_url(database_path: Path) -> str:
+    return f"sqlite:///{database_path.as_posix()}"
 
-    def connect(self) -> sqlite3.Connection:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.database_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+
+def _is_sqlite_url(url: str) -> bool:
+    return url.startswith("sqlite:")
+
+
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+class Database:
+    def __init__(self, database_path: Path, database_url: str | None = None):
+        self.database_path = database_path
+        self.database_url = _normalize_database_url(database_url or _sqlite_url(database_path))
+        connect_args = {"check_same_thread": False} if _is_sqlite_url(self.database_url) else {}
+        self.engine = create_engine(self.database_url, future=True, connect_args=connect_args, pool_pre_ping=True)
+
+    def connect(self) -> Connection:
+        return self.engine.connect()
 
     def init_schema(self) -> None:
-        with self.connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS orders (
-                    id TEXT PRIMARY KEY,
-                    idempotency_key TEXT,
-                    customer_name TEXT NOT NULL,
-                    car_number TEXT NOT NULL,
-                    phone TEXT NOT NULL,
-                    design_id TEXT NOT NULL,
-                    design_name TEXT NOT NULL,
-                    size_id TEXT NOT NULL,
-                    size_label TEXT NOT NULL,
-                    width_mm REAL NOT NULL,
-                    height_mm REAL NOT NULL,
-                    thickness_mm REAL NOT NULL,
-                    font_size_mm REAL NOT NULL,
-                    selected_elements_json TEXT NOT NULL,
-                    model_params_json TEXT,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    paid_at TEXT,
-                    ready_for_pickup_at TEXT,
-                    archived_at TEXT,
-                    stl_path TEXT,
-                    wrapper_scad_path TEXT,
-                    batch_id TEXT,
-                    gcode_path TEXT,
-                    error_message TEXT
-                );
+        if self.engine.dialect.name == "sqlite":
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
-                CREATE INDEX IF NOT EXISTS idx_orders_status_created
-                    ON orders(status, created_at);
-
-                CREATE TABLE IF NOT EXISTS print_batches (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    manifest_path TEXT,
-                    plate_scad_path TEXT,
-                    plate_stl_path TEXT,
-                    gcode_path TEXT,
-                    error_message TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS print_batch_items (
-                    batch_id TEXT NOT NULL,
-                    order_id TEXT NOT NULL,
-                    position_x_mm REAL NOT NULL,
-                    position_y_mm REAL NOT NULL,
-                    PRIMARY KEY(batch_id, order_id),
-                    FOREIGN KEY(batch_id) REFERENCES print_batches(id) ON DELETE CASCADE,
-                    FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
-                );
-                """
+        metadata.create_all(self.engine)
+        self._migrate_existing_schema()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_orders_status_created
+                    ON orders(status, created_at)
+                    """
+                )
             )
-            order_columns = {row["name"] for row in conn.execute("PRAGMA table_info(orders)").fetchall()}
-            if "idempotency_key" not in order_columns:
-                conn.execute("ALTER TABLE orders ADD COLUMN idempotency_key TEXT")
-            if "archived_at" not in order_columns:
-                conn.execute("ALTER TABLE orders ADD COLUMN archived_at TEXT")
-            if "model_params_json" not in order_columns:
-                conn.execute("ALTER TABLE orders ADD COLUMN model_params_json TEXT")
-            if "ready_for_pickup_at" not in order_columns:
-                conn.execute("ALTER TABLE orders ADD COLUMN ready_for_pickup_at TEXT")
-                conn.execute(
+            conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key
+                    ON orders(idempotency_key)
+                    WHERE idempotency_key IS NOT NULL
+                    """
+                )
+            )
+            conn.execute(
+                text(
                     """
                     UPDATE orders
                     SET ready_for_pickup_at = updated_at
-                    WHERE status = ? AND ready_for_pickup_at IS NULL
-                    """,
-                    (statuses.READY_FOR_PICKUP,),
-                )
-            conn.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key
-                    ON orders(idempotency_key)
-                    WHERE idempotency_key IS NOT NULL
-                """
+                    WHERE status = :status AND ready_for_pickup_at IS NULL
+                    """
+                ),
+                {"status": statuses.READY_FOR_PICKUP},
             )
+            conn.execute(text("UPDATE orders SET source = 'web' WHERE source IS NULL OR source = ''"))
+
+    def _migrate_existing_schema(self) -> None:
+        columns = {column["name"] for column in inspect(self.engine).get_columns("orders")}
+        additions = {
+            "idempotency_key": "TEXT",
+            "archived_at": "TEXT",
+            "model_params_json": "TEXT",
+            "ready_for_pickup_at": "TEXT",
+            "source": "TEXT",
+            "telegram_chat_id": "TEXT",
+            "telegram_user_id": "TEXT",
+            "telegram_username": "TEXT",
+        }
+        missing = [(name, ddl_type) for name, ddl_type in additions.items() if name not in columns]
+        if not missing:
+            return
+        with self.engine.begin() as conn:
+            for name, ddl_type in missing:
+                conn.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {ddl_type}"))
 
     def create_order(self, payload: dict[str, Any], selection: Any, model_params: dict[str, Any] | None = None) -> dict[str, Any]:
         idempotency_key = payload.get("idempotency_key") or None
@@ -191,39 +270,35 @@ class Database:
         else:
             font_size_mm = float(size["font_size_mm"]) * scale
 
+        values = {
+            "id": order_id,
+            "idempotency_key": idempotency_key,
+            "customer_name": payload["customer_name"],
+            "car_number": payload["car_number"],
+            "phone": payload["phone"],
+            "design_id": design["id"],
+            "design_name": design["name"],
+            "size_id": size["id"],
+            "size_label": size["label"],
+            "width_mm": width_mm,
+            "height_mm": height_mm,
+            "thickness_mm": float(model_params.get("thickness_mm", size["thickness_mm"])) if model_params else float(size["thickness_mm"]),
+            "font_size_mm": font_size_mm,
+            "selected_elements_json": elements_json,
+            "model_params_json": model_params_json,
+            "status": statuses.UNPAID,
+            "source": _clean_optional_text(payload.get("source")) or "web",
+            "telegram_chat_id": _clean_optional_text(payload.get("telegram_chat_id")),
+            "telegram_user_id": _clean_optional_text(payload.get("telegram_user_id")),
+            "telegram_username": _clean_optional_text(payload.get("telegram_username")),
+            "created_at": created,
+            "updated_at": created,
+        }
+
         try:
-            with self.connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO orders (
-                        id, idempotency_key, customer_name, car_number, phone, design_id, design_name,
-                        size_id, size_label, width_mm, height_mm, thickness_mm, font_size_mm,
-                        selected_elements_json, model_params_json, status, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        order_id,
-                        idempotency_key,
-                        payload["customer_name"],
-                        payload["car_number"],
-                        payload["phone"],
-                        design["id"],
-                        design["name"],
-                        size["id"],
-                        size["label"],
-                        width_mm,
-                        height_mm,
-                        float(model_params.get("thickness_mm", size["thickness_mm"])) if model_params else float(size["thickness_mm"]),
-                        font_size_mm,
-                        elements_json,
-                        model_params_json,
-                        statuses.UNPAID,
-                        created,
-                        created,
-                    ),
-                )
-        except sqlite3.IntegrityError:
+            with self.engine.begin() as conn:
+                conn.execute(orders.insert().values(**values))
+        except IntegrityError:
             if idempotency_key:
                 existing = self.get_order_by_idempotency_key(idempotency_key)
                 if existing is not None:
@@ -232,127 +307,111 @@ class Database:
         return self.get_order(order_id)
 
     def get_order(self, order_id: str) -> dict[str, Any]:
-        with self.connect() as conn:
-            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        with self.engine.connect() as conn:
+            row = conn.execute(select(orders).where(orders.c.id == order_id)).mappings().first()
         if row is None:
             raise KeyError(order_id)
         return self._order_from_row(row)
 
     def get_order_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
-        with self.connect() as conn:
-            row = conn.execute("SELECT * FROM orders WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
+        with self.engine.connect() as conn:
+            row = conn.execute(select(orders).where(orders.c.idempotency_key == idempotency_key)).mappings().first()
         return self._order_from_row(row) if row is not None else None
 
     def list_orders(self, status: str | None = None, include_archived: bool = False) -> list[dict[str, Any]]:
-        query = "SELECT * FROM orders"
-        conditions: list[str] = []
-        args: list[Any] = []
+        conditions = []
         if not include_archived:
-            conditions.append("archived_at IS NULL")
+            conditions.append(orders.c.archived_at.is_(None))
         if status:
-            conditions.append("status = ?")
-            args.append(status)
+            conditions.append(orders.c.status == status)
+        query = select(orders)
         if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY created_at DESC"
-        with self.connect() as conn:
-            rows = conn.execute(query, args).fetchall()
+            query = query.where(and_(*conditions))
+        query = query.order_by(orders.c.created_at.desc())
+        with self.engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
         return [self._order_from_row(row) for row in rows]
 
     def list_orders_by_statuses(self, order_statuses: Iterable[str], ascending: bool = True) -> list[dict[str, Any]]:
         values = list(order_statuses)
         if not values:
             return []
-        placeholders = ",".join("?" for _ in values)
-        direction = "ASC" if ascending else "DESC"
-        with self.connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT * FROM orders
-                WHERE archived_at IS NULL AND status IN ({placeholders})
-                ORDER BY created_at {direction}
-                """,
-                values,
-            ).fetchall()
+        query = (
+            select(orders)
+            .where(and_(orders.c.archived_at.is_(None), orders.c.status.in_(values)))
+            .order_by(orders.c.created_at.asc() if ascending else orders.c.created_at.desc())
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
         return [self._order_from_row(row) for row in rows]
 
     def update_order_status(self, order_id: str, status: str, error_message: str | None = None) -> dict[str, Any]:
         statuses.ensure_known_status(status)
         updated = now_iso()
-        paid_at_sql = ", paid_at = COALESCE(paid_at, ?)" if status == statuses.PAID else ""
-        ready_at_sql = ", ready_for_pickup_at = COALESCE(ready_for_pickup_at, ?)" if status == statuses.READY_FOR_PICKUP else ""
-        if status == statuses.UNPAID:
-            paid_at_sql = ", paid_at = NULL, ready_for_pickup_at = NULL, batch_id = NULL"
-        args: list[Any] = [status, updated]
+        values: dict[str, Any] = {"status": status, "updated_at": updated, "error_message": error_message}
         if status == statuses.PAID:
-            args.append(updated)
+            current = self.get_order(order_id)
+            values["paid_at"] = current.get("paid_at") or updated
         if status == statuses.READY_FOR_PICKUP:
-            args.append(updated)
-        args.extend([error_message, order_id])
+            current = self.get_order(order_id)
+            values["ready_for_pickup_at"] = current.get("ready_for_pickup_at") or updated
+        if status == statuses.UNPAID:
+            values["paid_at"] = None
+            values["ready_for_pickup_at"] = None
+            values["batch_id"] = None
 
-        with self.connect() as conn:
-            conn.execute(
-                f"""
-                UPDATE orders
-                SET status = ?, updated_at = ? {paid_at_sql} {ready_at_sql}, error_message = ?
-                WHERE id = ?
-                """,
-                args,
-            )
-            if conn.total_changes == 0:
+        with self.engine.begin() as conn:
+            result = conn.execute(orders.update().where(orders.c.id == order_id).values(**values))
+            if result.rowcount == 0:
                 raise KeyError(order_id)
         return self.get_order(order_id)
 
     def reset_orphan_printing_orders(self) -> dict[str, Any]:
         updated = now_iso()
-        with self.connect() as conn:
-            paid_rows = conn.execute(
-                """
-                SELECT id FROM orders
-                WHERE archived_at IS NULL
-                  AND status = ?
-                  AND paid_at IS NOT NULL
-                  AND batch_id IS NULL
-                  AND (stl_path IS NULL OR stl_path = '')
-                ORDER BY created_at
-                """,
-                (statuses.PRINTING,),
-            ).fetchall()
-            stl_rows = conn.execute(
-                """
-                SELECT id FROM orders
-                WHERE archived_at IS NULL
-                  AND status = ?
-                  AND paid_at IS NOT NULL
-                  AND batch_id IS NULL
-                  AND stl_path IS NOT NULL
-                  AND stl_path != ''
-                ORDER BY created_at
-                """,
-                (statuses.PRINTING,),
-            ).fetchall()
-            paid_ids = [row["id"] for row in paid_rows]
-            stl_ids = [row["id"] for row in stl_rows]
+        with self.engine.begin() as conn:
+            paid_ids = list(
+                conn.execute(
+                    select(orders.c.id)
+                    .where(
+                        and_(
+                            orders.c.archived_at.is_(None),
+                            orders.c.status == statuses.PRINTING,
+                            orders.c.paid_at.is_not(None),
+                            orders.c.batch_id.is_(None),
+                            (orders.c.stl_path.is_(None) | (orders.c.stl_path == "")),
+                        )
+                    )
+                    .order_by(orders.c.created_at.asc())
+                ).scalars()
+            )
+            stl_ids = list(
+                conn.execute(
+                    select(orders.c.id)
+                    .where(
+                        and_(
+                            orders.c.archived_at.is_(None),
+                            orders.c.status == statuses.PRINTING,
+                            orders.c.paid_at.is_not(None),
+                            orders.c.batch_id.is_(None),
+                            orders.c.stl_path.is_not(None),
+                            orders.c.stl_path != "",
+                        )
+                    )
+                    .order_by(orders.c.created_at.asc())
+                ).scalars()
+            )
 
             if paid_ids:
-                placeholders = ",".join("?" for _ in paid_ids)
                 conn.execute(
-                    f"""
-                    UPDATE orders
-                    SET status = ?, updated_at = ?, error_message = NULL
-                    WHERE id IN ({placeholders})
-                    """,
-                    [statuses.PAID, updated, *paid_ids],
+                    orders.update()
+                    .where(orders.c.id.in_(paid_ids))
+                    .values(status=statuses.PAID, updated_at=updated, error_message=None)
                 )
             if stl_ids:
-                placeholders = ",".join("?" for _ in stl_ids)
                 conn.execute(
-                    f"""
-                    UPDATE orders
-                    SET status = ?, updated_at = ?, error_message = NULL
-                    WHERE id IN ({placeholders})
-                    """,
-                    [statuses.STL_READY, updated, *stl_ids],
+                    orders.update()
+                    .where(orders.c.id.in_(stl_ids))
+                    .values(status=statuses.STL_READY, updated_at=updated, error_message=None)
                 )
 
         return {
@@ -372,25 +431,19 @@ class Database:
             raise ValueError("Printing batches can not be changed")
 
         updated = now_iso()
-        with self.connect() as conn:
+        with self.engine.begin() as conn:
             conn.execute(
-                """
-                UPDATE print_batches
-                SET status = ?, updated_at = ?, error_message = ?
-                WHERE id = ?
-                """,
-                (statuses.ERROR, updated, message, batch_id),
+                print_batches.update()
+                .where(print_batches.c.id == batch_id)
+                .values(status=statuses.ERROR, updated_at=updated, error_message=message)
             )
             for item in batch["items"]:
                 if item.get("archived_at") or item.get("status") != statuses.QUEUED:
                     continue
                 conn.execute(
-                    """
-                    UPDATE orders
-                    SET status = ?, batch_id = NULL, updated_at = ?, error_message = NULL
-                    WHERE id = ?
-                    """,
-                    (statuses.STL_READY, updated, item["order_id"]),
+                    orders.update()
+                    .where(orders.c.id == item["order_id"])
+                    .values(status=statuses.STL_READY, batch_id=None, updated_at=updated, error_message=None)
                 )
 
     def archive_order(self, order_id: str) -> dict[str, Any]:
@@ -401,31 +454,32 @@ class Database:
             self.invalidate_batch_for_order(order_id, "Batch invalidated because an order was deleted.")
 
         updated = now_iso()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE orders
-                SET archived_at = COALESCE(archived_at, ?), batch_id = NULL, updated_at = ?
-                WHERE id = ?
-                """,
-                (updated, updated, order_id),
+        archived_at = order.get("archived_at") or updated
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                orders.update()
+                .where(orders.c.id == order_id)
+                .values(archived_at=archived_at, batch_id=None, updated_at=updated)
             )
-            if conn.total_changes == 0:
+            if result.rowcount == 0:
                 raise KeyError(order_id)
         return self.get_order(order_id)
 
     def set_order_generated(self, order_id: str, stl_path: Path, wrapper_scad_path: Path) -> dict[str, Any]:
         updated = now_iso()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE orders
-                SET status = ?, updated_at = ?, stl_path = ?, wrapper_scad_path = ?, error_message = NULL
-                WHERE id = ?
-                """,
-                (statuses.STL_READY, updated, str(stl_path), str(wrapper_scad_path), order_id),
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                orders.update()
+                .where(orders.c.id == order_id)
+                .values(
+                    status=statuses.STL_READY,
+                    updated_at=updated,
+                    stl_path=str(stl_path),
+                    wrapper_scad_path=str(wrapper_scad_path),
+                    error_message=None,
+                )
             )
-            if conn.total_changes == 0:
+            if result.rowcount == 0:
                 raise KeyError(order_id)
         return self.get_order(order_id)
 
@@ -440,30 +494,30 @@ class Database:
 
         batch_id = _new_id("batch")
         created = now_iso()
-        with self.connect() as conn:
+        with self.engine.begin() as conn:
             conn.execute(
-                """
-                INSERT INTO print_batches (id, status, created_at, updated_at, manifest_path)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (batch_id, statuses.QUEUED, created, created, str(manifest_path) if manifest_path else None),
+                print_batches.insert().values(
+                    id=batch_id,
+                    status=statuses.QUEUED,
+                    created_at=created,
+                    updated_at=created,
+                    manifest_path=str(manifest_path) if manifest_path else None,
+                )
             )
             for item in layout_items:
                 order = item["order"]
                 conn.execute(
-                    """
-                    INSERT INTO print_batch_items (batch_id, order_id, position_x_mm, position_y_mm)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (batch_id, order["id"], float(item["x_mm"]), float(item["y_mm"])),
+                    print_batch_items.insert().values(
+                        batch_id=batch_id,
+                        order_id=order["id"],
+                        position_x_mm=float(item["x_mm"]),
+                        position_y_mm=float(item["y_mm"]),
+                    )
                 )
                 conn.execute(
-                    """
-                    UPDATE orders
-                    SET status = ?, batch_id = ?, updated_at = ?, error_message = NULL
-                    WHERE id = ?
-                    """,
-                    (statuses.QUEUED, batch_id, created, order["id"]),
+                    orders.update()
+                    .where(orders.c.id == order["id"])
+                    .values(status=statuses.QUEUED, batch_id=batch_id, updated_at=created, error_message=None)
                 )
         return self.get_batch(batch_id)
 
@@ -480,64 +534,51 @@ class Database:
         batch = self.get_batch(batch_id)
         next_status = status or batch["status"]
         updated = now_iso()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE print_batches
-                SET status = ?, updated_at = ?,
-                    manifest_path = COALESCE(?, manifest_path),
-                    plate_scad_path = COALESCE(?, plate_scad_path),
-                    plate_stl_path = COALESCE(?, plate_stl_path),
-                    gcode_path = COALESCE(?, gcode_path),
-                    error_message = ?
-                WHERE id = ?
-                """,
-                (
-                    next_status,
-                    updated,
-                    str(manifest_path) if manifest_path else None,
-                    str(plate_scad_path) if plate_scad_path else None,
-                    str(plate_stl_path) if plate_stl_path else None,
-                    str(gcode_path) if gcode_path else None,
-                    error_message,
-                    batch_id,
-                ),
-            )
+        values = {
+            "status": next_status,
+            "updated_at": updated,
+            "error_message": error_message,
+        }
+        if manifest_path is not None:
+            values["manifest_path"] = str(manifest_path)
+        if plate_scad_path is not None:
+            values["plate_scad_path"] = str(plate_scad_path)
+        if plate_stl_path is not None:
+            values["plate_stl_path"] = str(plate_stl_path)
+        if gcode_path is not None:
+            values["gcode_path"] = str(gcode_path)
+
+        with self.engine.begin() as conn:
+            conn.execute(print_batches.update().where(print_batches.c.id == batch_id).values(**values))
         return self.get_batch(batch_id)
 
     def reset_printing_to_queue(self) -> dict[str, Any]:
         updated = now_iso()
-        with self.connect() as conn:
-            batch_rows = conn.execute(
-                "SELECT id FROM print_batches WHERE status = ? ORDER BY created_at",
-                (statuses.PRINTING,),
-            ).fetchall()
-            order_rows = conn.execute(
-                """
-                SELECT id FROM orders
-                WHERE archived_at IS NULL AND status = ?
-                ORDER BY created_at
-                """,
-                (statuses.PRINTING,),
-            ).fetchall()
-            batch_ids = [row["id"] for row in batch_rows]
-            order_ids = [row["id"] for row in order_rows]
+        with self.engine.begin() as conn:
+            batch_ids = list(
+                conn.execute(
+                    select(print_batches.c.id)
+                    .where(print_batches.c.status == statuses.PRINTING)
+                    .order_by(print_batches.c.created_at.asc())
+                ).scalars()
+            )
+            order_ids = list(
+                conn.execute(
+                    select(orders.c.id)
+                    .where(and_(orders.c.archived_at.is_(None), orders.c.status == statuses.PRINTING))
+                    .order_by(orders.c.created_at.asc())
+                ).scalars()
+            )
 
             conn.execute(
-                """
-                UPDATE print_batches
-                SET status = ?, updated_at = ?, error_message = NULL
-                WHERE status = ?
-                """,
-                (statuses.QUEUED, updated, statuses.PRINTING),
+                print_batches.update()
+                .where(print_batches.c.status == statuses.PRINTING)
+                .values(status=statuses.QUEUED, updated_at=updated, error_message=None)
             )
             conn.execute(
-                """
-                UPDATE orders
-                SET status = ?, updated_at = ?, error_message = NULL
-                WHERE archived_at IS NULL AND status = ?
-                """,
-                (statuses.QUEUED, updated, statuses.PRINTING),
+                orders.update()
+                .where(and_(orders.c.archived_at.is_(None), orders.c.status == statuses.PRINTING))
+                .values(status=statuses.QUEUED, updated_at=updated, error_message=None)
             )
 
         return {
@@ -546,48 +587,49 @@ class Database:
         }
 
     def get_batch(self, batch_id: str) -> dict[str, Any]:
-        with self.connect() as conn:
-            row = conn.execute("SELECT * FROM print_batches WHERE id = ?", (batch_id,)).fetchone()
-            items = conn.execute(
-                """
-                SELECT
-                    i.*,
-                    o.customer_name,
-                    o.car_number,
-                    o.phone,
-                    o.status,
-                    o.design_name,
-                    o.size_label,
-                    o.width_mm,
-                    o.height_mm,
-                    o.thickness_mm,
-                    o.archived_at
-                FROM print_batch_items i
-                JOIN orders o ON o.id = i.order_id
-                WHERE i.batch_id = ?
-                ORDER BY i.position_y_mm, i.position_x_mm
-                """,
-                (batch_id,),
-            ).fetchall()
-        if row is None:
+        with self.engine.connect() as conn:
+            batch_row = conn.execute(select(print_batches).where(print_batches.c.id == batch_id)).mappings().first()
+            item_rows = conn.execute(
+                select(
+                    print_batch_items.c.batch_id,
+                    print_batch_items.c.order_id,
+                    print_batch_items.c.position_x_mm,
+                    print_batch_items.c.position_y_mm,
+                    orders.c.customer_name,
+                    orders.c.car_number,
+                    orders.c.phone,
+                    orders.c.status,
+                    orders.c.design_name,
+                    orders.c.size_label,
+                    orders.c.width_mm,
+                    orders.c.height_mm,
+                    orders.c.thickness_mm,
+                    orders.c.archived_at,
+                )
+                .select_from(print_batch_items.join(orders, orders.c.id == print_batch_items.c.order_id))
+                .where(print_batch_items.c.batch_id == batch_id)
+                .order_by(print_batch_items.c.position_y_mm.asc(), print_batch_items.c.position_x_mm.asc())
+            ).mappings().all()
+        if batch_row is None:
             raise KeyError(batch_id)
-        return self._batch_from_row(row, items)
+        return self._batch_from_row(batch_row, item_rows)
 
     def list_batches(self) -> list[dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute("SELECT id FROM print_batches ORDER BY created_at DESC").fetchall()
-        return [self.get_batch(row["id"]) for row in rows]
+        with self.engine.connect() as conn:
+            batch_ids = list(conn.execute(select(print_batches.c.id).order_by(print_batches.c.created_at.desc())).scalars())
+        return [self.get_batch(batch_id) for batch_id in batch_ids]
 
-    def _order_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _order_from_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
         order = dict(row)
         order["selected_elements"] = json.loads(order.pop("selected_elements_json") or "[]")
         model_params_json = order.pop("model_params_json", None)
         order["model_params"] = json.loads(model_params_json) if model_params_json else None
+        order["source"] = order.get("source") or "web"
         order["status_label"] = statuses.STATUS_LABELS.get(order["status"], order["status"])
         order["paid_to_ready_seconds"] = _elapsed_seconds(order.get("paid_at"), order.get("ready_for_pickup_at"))
         return order
 
-    def _batch_from_row(self, row: sqlite3.Row, items: list[sqlite3.Row]) -> dict[str, Any]:
+    def _batch_from_row(self, row: Mapping[str, Any], items: list[Mapping[str, Any]]) -> dict[str, Any]:
         batch = dict(row)
         batch["status_label"] = statuses.STATUS_LABELS.get(batch["status"], batch["status"])
         batch["items"] = [dict(item) for item in items]

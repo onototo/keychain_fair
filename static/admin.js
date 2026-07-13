@@ -71,6 +71,10 @@ function formatDate(value) {
   return new Date(value).toLocaleTimeString();
 }
 
+function sourceLabel(order) {
+  return order.source === "telegram" ? "Telegram" : "Web";
+}
+
 function formatDuration(value) {
   if (value === null || value === undefined) return "--";
   const total = Math.max(0, Math.floor(Number(value)));
@@ -224,6 +228,7 @@ async function refreshOrders({ force = false } = {}) {
       return `<option value="${value}" ${selected} ${disabled ? "disabled" : ""}>${label}</option>`;
     }).join("");
     row.innerHTML = `
+      <td>${sourceLabel(order)}</td>
       <td>${formatDate(order.created_at)}</td>
       <td>${order.customer_name}</td>
       <td>${order.phone}</td>

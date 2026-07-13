@@ -1,0 +1,14 @@
+.git
+.venv
+.octoprint-venv
+__pycache__
+.pytest_cache
+tmp
+data
+generated
+downloads
+logs
+octoprint
+*.pyc
+bot/node_modules
+bot/dist

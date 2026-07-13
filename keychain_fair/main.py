@@ -25,7 +25,7 @@ from .editor import (
     preview_order_payload,
     save_design_preset,
 )
-from .models import OrderCreate, PaymentStatusUpdate, StatusUpdate
+from .models import InternalOrderCreate, OrderCreate, PaymentStatusUpdate, StatusUpdate
 from .network import local_ipv4_addresses, qr_data_uri, wifi_qr_payload
 from .services import OrderService
 from .statistics import XLSX_MEDIA_TYPE, build_statistics_workbook
@@ -37,7 +37,16 @@ logger = logging.getLogger(__name__)
 
 def _public_order(order: dict[str, Any]) -> dict[str, Any]:
     public = dict(order)
-    for key in ["stl_path", "wrapper_scad_path", "gcode_path", "batch_id", "model_params"]:
+    for key in [
+        "stl_path",
+        "wrapper_scad_path",
+        "gcode_path",
+        "batch_id",
+        "model_params",
+        "telegram_chat_id",
+        "telegram_user_id",
+        "telegram_username",
+    ]:
         public.pop(key, None)
     return public
 
@@ -209,7 +218,7 @@ def create_app(
     start_worker: bool = True,
 ) -> FastAPI:
     app_settings = settings or load_settings()
-    database = Database(app_settings.database_path)
+    database = Database(app_settings.database_path, app_settings.database_url)
     catalog = DesignCatalog(app_settings.designs_dir)
     model_generator = generator or OpenScadModelGenerator(app_settings)
     cura_slicer = slicer or CuraEngineSlicer(app_settings)
@@ -333,6 +342,15 @@ def create_app(
             detail={"message": "Invalid cashier PIN", "attempts_remaining": 3 - attempt.failures},
         )
 
+    def require_internal(
+        x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+    ) -> None:
+        if not app_settings.internal_api_token:
+            raise HTTPException(status_code=503, detail="Internal API token is not configured")
+        if x_internal_token and secrets.compare_digest(x_internal_token, app_settings.internal_api_token):
+            return
+        raise HTTPException(status_code=401, detail="Invalid internal API token")
+
     @app.get("/")
     def buyer_page() -> FileResponse:
         return FileResponse(static_dir / "index.html")
@@ -363,6 +381,14 @@ def create_app(
 
     @app.post("/api/orders", status_code=201)
     def create_order(payload: OrderCreate) -> dict[str, Any]:
+        try:
+            order = service.create_order(payload)
+        except DesignCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"order": _public_order(order)}
+
+    @app.post("/api/internal/orders", status_code=201, dependencies=[Depends(require_internal)])
+    def create_internal_order(payload: InternalOrderCreate) -> dict[str, Any]:
         try:
             order = service.create_order(payload)
         except DesignCatalogError as exc:

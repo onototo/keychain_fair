@@ -8,6 +8,8 @@ def test_design_catalog_loads_templates():
 
     assert {item["id"] for item in designs} >= {"classic_plate", "rounded_tag"}
     assert all(item["template_available"] for item in designs)
+    assert all(item["preview_image"].startswith("/static/design-previews/") for item in designs)
+    assert all((PROJECT_ROOT / item["preview_image"].lstrip("/")).exists() for item in designs)
 
 
 def test_selection_filters_elements():
