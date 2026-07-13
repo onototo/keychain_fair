@@ -15,9 +15,9 @@ quality:
   print_speed_mm_s: 75
 
 cura_engine:
-  search_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions"
-  settings_json_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions\\fdmprinter.def.json"
-  extruder_json_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\share\\cura\\resources\\definitions\\fdmextruder.def.json"
+  search_path: config/cura-definitions
+  settings_json_path: config/cura-definitions/fdmprinter.def.json
+  extruder_json_path: config/cura-definitions/fdmextruder.def.json
   settings:
     machine_name: KeychainFair
     machine_width: 220

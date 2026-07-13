@@ -100,6 +100,51 @@ def test_order_flow_prepares_stl_and_batch_without_printing(tmp_path):
     assert current["gcode_path"] is None
 
 
+def test_prepare_rebuilds_existing_queued_batch_with_new_ready_orders(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        first_order_id = create_paid_order(client, "first-queued-order", customer_name="First")
+        first_prepare = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        old_batch_id = first_prepare["batching"]["batches"][0]["id"]
+
+        second_order_id = create_paid_order(client, "second-queued-order", customer_name="Second")
+        rebuilt = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+
+    active_batches = [batch for batch in batches if batch["status"] == "queued"]
+    old_batch = next(batch for batch in batches if batch["id"] == old_batch_id)
+
+    assert rebuilt["rebuilt_queued_batches"]["batch_ids"] == [old_batch_id]
+    assert rebuilt["rebuilt_queued_batches"]["order_ids"] == [first_order_id]
+    assert old_batch["status"] == "error"
+    assert len(active_batches) == 1
+    assert [item["order_id"] for item in active_batches[0]["items"]] == [first_order_id, second_order_id]
+    assert {round(item["thickness_mm"], 3) for item in active_batches[0]["items"]} == {2.1}
+
+
+def test_prepare_does_not_rebuild_queued_batch_without_new_ready_orders(tmp_path):
+    settings = make_settings(tmp_path)
+    app = queue_app(settings)
+
+    with TestClient(app) as client:
+        order_id = create_paid_order(client, "stable-queued-order")
+        first_prepare = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        first_batch_id = first_prepare["batching"]["batches"][0]["id"]
+
+        second_prepare = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        batches = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"]
+
+    active_batches = [batch for batch in batches if batch["status"] == "queued"]
+
+    assert second_prepare["rebuilt_queued_batches"]["batch_ids"] == []
+    assert second_prepare["batching"]["batches_created"] == 0
+    assert len(active_batches) == 1
+    assert active_batches[0]["id"] == first_batch_id
+    assert [item["order_id"] for item in active_batches[0]["items"]] == [order_id]
+
+
 def test_internal_order_requires_token_and_stores_telegram_metadata(tmp_path):
     settings = make_settings(tmp_path)
     app = create_test_app(settings)

@@ -93,6 +93,17 @@ function formatMm(value) {
   return number.toFixed(1).replace(".0", "");
 }
 
+function toPhysicalBedPosition(item, bedWidth, bedHeight) {
+  const x = Number(item.position_x_mm || 0);
+  const y = Number(item.position_y_mm || 0);
+
+  // CuraEngine places the imported STL local origin at the bed center.
+  return {
+    x: x + bedWidth / 2,
+    y: y + bedHeight / 2,
+  };
+}
+
 function batchHasDeletedOrders(batch) {
   return (batch?.items || []).some((item) => item.archived_at);
 }
@@ -333,6 +344,8 @@ function renderBatchPreview(payload) {
   bedPreview.innerHTML = "";
   batchItems.innerHTML = "";
   batchStatus.classList.remove("ok", "error");
+  const [bedWidth, bedHeight] = bedSizeMm.map(Number);
+  bedPreview.style.aspectRatio = `${bedWidth || 220} / ${bedHeight || 220}`;
 
   if (!activeBatch) {
     batchStatus.textContent = "Нет партии";
@@ -343,7 +356,6 @@ function renderBatchPreview(payload) {
     return;
   }
 
-  const [bedWidth, bedHeight] = bedSizeMm.map(Number);
   const hasBlocked = batchHasBlockedOrders(activeBatch);
   const batchReady = isBatchReadyForPrint(activeBatch);
   const printable = canStartPrint(activeBatch);
@@ -365,14 +377,13 @@ function renderBatchPreview(payload) {
   activeBatch.items.filter((item) => item.status !== "unpaid").forEach((item) => {
     const width = Number(item.width_mm || 20);
     const height = Number(item.height_mm || 20);
-    const x = Number(item.position_x_mm || 0);
-    const y = Number(item.position_y_mm || 0);
+    const { x, y } = toPhysicalBedPosition(item, bedWidth, bedHeight);
     const node = document.createElement("div");
     node.className = `bed-item ${item.archived_at ? "archived" : ""}`;
     node.style.left = `${(x / bedWidth) * 100}%`;
     node.style.bottom = `${(y / bedHeight) * 100}%`;
-    node.style.width = `${Math.max(3, (width / bedWidth) * 100)}%`;
-    node.style.height = `${Math.max(3, (height / bedHeight) * 100)}%`;
+    node.style.width = `${(width / bedWidth) * 100}%`;
+    node.style.height = `${(height / bedHeight) * 100}%`;
     node.title = `${item.customer_name} · ${formatMm(width)}×${formatMm(height)} мм`;
 
     const title = document.createElement("strong");

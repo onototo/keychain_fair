@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import json
@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -80,6 +81,76 @@ def _font_size_from_params(params: dict[str, Any], fallback: float) -> float:
         return fallback
 
 
+def _binary_stl_triangle_count(data: bytes) -> int | None:
+    if len(data) < 84:
+        return None
+    count = struct.unpack("<I", data[80:84])[0]
+    return count if 84 + count * 50 == len(data) else None
+
+
+def _read_binary_stl_triangles(data: bytes) -> list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]]:
+    count = struct.unpack("<I", data[80:84])[0]
+    triangles = []
+    offset = 84
+    for _ in range(count):
+        normal = struct.unpack("<fff", data[offset : offset + 12])
+        offset += 12
+        vertices = []
+        for _vertex_index in range(3):
+            vertices.append(struct.unpack("<fff", data[offset : offset + 12]))
+            offset += 12
+        offset += 2
+        triangles.append((normal, vertices))
+    return triangles
+
+
+def _read_ascii_stl_triangles(text: str) -> list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]]:
+    triangles = []
+    normal = (0.0, 0.0, 0.0)
+    vertices: list[tuple[float, float, float]] = []
+
+    for raw_line in text.splitlines():
+        parts = raw_line.strip().split()
+        if len(parts) == 5 and parts[0].lower() == "facet" and parts[1].lower() == "normal":
+            try:
+                normal = (float(parts[2]), float(parts[3]), float(parts[4]))
+            except ValueError:
+                normal = (0.0, 0.0, 0.0)
+            vertices = []
+        elif len(parts) == 4 and parts[0].lower() == "vertex":
+            try:
+                vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+            except ValueError:
+                vertices = []
+        elif parts and parts[0].lower() == "endfacet" and len(vertices) == 3:
+            triangles.append((normal, vertices))
+            vertices = []
+
+    return triangles
+
+
+def _read_stl_triangles(path: Path) -> list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]]:
+    data = path.read_bytes()
+    if _binary_stl_triangle_count(data) is not None:
+        return _read_binary_stl_triangles(data)
+    return _read_ascii_stl_triangles(data.decode("utf-8", errors="ignore"))
+
+
+def _write_binary_stl(
+    path: Path,
+    triangles: list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]],
+) -> None:
+    header = b"KeychainFair batch STL".ljust(80, b" ")
+    with path.open("wb") as handle:
+        handle.write(header)
+        handle.write(struct.pack("<I", len(triangles)))
+        for normal, vertices in triangles:
+            handle.write(struct.pack("<fff", *normal))
+            for vertex in vertices:
+                handle.write(struct.pack("<fff", *vertex))
+            handle.write(struct.pack("<H", 0))
+
+
 class OpenScadModelGenerator:
     def __init__(self, settings: AppSettings):
         self.settings = settings
@@ -90,8 +161,8 @@ class OpenScadModelGenerator:
             return AdapterResult(
                 success=False,
                 message=(
-                    "OpenSCAD не найден. Установите OpenSCAD или задайте "
-                    "external_tools.openscad_path в config/app.yaml."
+                    "OpenSCAD РЅРµ РЅР°Р№РґРµРЅ. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ OpenSCAD РёР»Рё Р·Р°РґР°Р№С‚Рµ "
+                    "external_tools.openscad_path РІ config/app.yaml."
                 ),
             )
         return AdapterResult(success=True, message="OpenSCAD ready", output_path=Path(executable))
@@ -182,37 +253,35 @@ class OpenScadModelGenerator:
         return result
 
     def combine_batch_stl(self, batch_id: str, layout_items: list[dict[str, Any]]) -> AdapterResult:
-        ready = self.check_ready()
-        if not ready.success:
-            return ready
-
         batch_dir = self.settings.generated_dir / "batches" / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
         plate_scad_path = batch_dir / f"{batch_id}_plate.scad"
         plate_stl_path = batch_dir / f"{batch_id}_plate.stl"
 
-        lines = ["union() {"]
+        lines = ["// Reference only. The batch STL is merged directly to avoid CGAL boolean failures."]
+        triangles: list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]] = []
         for item in layout_items:
             order = item["order"]
-            stl_path = Path(order["stl_path"]).resolve().as_posix()
-            lines.append(f"    translate([{float(item['x_mm'])}, {float(item['y_mm'])}, 0]) import({_scad_string(stl_path)});")
-        lines.append("}")
+            stl_path = Path(order["stl_path"]).resolve()
+            x_mm = float(item["x_mm"])
+            y_mm = float(item["y_mm"])
+            if not stl_path.exists():
+                return AdapterResult(False, f"Order STL not found: {stl_path}")
+            lines.append(f"translate([{x_mm}, {y_mm}, 0]) import({_scad_string(stl_path.as_posix())});")
+            try:
+                for normal, vertices in _read_stl_triangles(stl_path):
+                    translated = [(x + x_mm, y + y_mm, z) for x, y, z in vertices]
+                    triangles.append((normal, translated))
+            except (OSError, struct.error) as exc:
+                return AdapterResult(False, f"STL merge failed for {stl_path}: {exc}")
         lines.append("")
         plate_scad_path.write_text("\n".join(lines), encoding="utf-8")
 
-        command = [
-            str(ready.output_path),
-            "--export-format",
-            "binstl",
-            "-o",
-            str(plate_stl_path),
-            str(plate_scad_path),
-        ]
-        result = self._run_command(command, plate_stl_path, "Партия STL создана", "OpenSCAD batch combine failed")
-        if result.extra is None:
-            result = AdapterResult(result.success, result.message, result.output_path, {})
-        result.extra["plate_scad_path"] = str(plate_scad_path)
-        return result
+        if not triangles:
+            return AdapterResult(False, "Batch STL merge failed: no triangles found")
+
+        _write_binary_stl(plate_stl_path, triangles)
+        return AdapterResult(True, "Batch STL created", plate_stl_path, {"plate_scad_path": str(plate_scad_path)})
 
     def _run_command(self, command: list[str], output_path: Path, success_message: str, error_prefix: str) -> AdapterResult:
         try:
@@ -244,13 +313,13 @@ class CuraEngineSlicer:
         filament_change_height_mm: float | None = None,
     ) -> AdapterResult:
         if not self.settings.slicer.enabled:
-            return AdapterResult(False, "Slicing выключен в config/app.yaml")
+            return AdapterResult(False, "Slicing РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
 
         executable = _resolve_executable(self.settings.tools.cura_engine_path)
         if not executable:
             return AdapterResult(
                 False,
-                "CuraEngine не найден. Установите Cura/CuraEngine или задайте external_tools.cura_engine_path.",
+                "CuraEngine РЅРµ РЅР°Р№РґРµРЅ. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ Cura/CuraEngine РёР»Рё Р·Р°РґР°Р№С‚Рµ external_tools.cura_engine_path.",
             )
 
         profile_result = self._load_profile()
@@ -318,7 +387,7 @@ class CuraEngineSlicer:
         if not self._has_extrusion_moves(output_gcode):
             return AdapterResult(False, "CuraEngine produced G-code without extrusion moves")
 
-        return AdapterResult(True, "G-code создан", output_gcode)
+        return AdapterResult(True, "G-code СЃРѕР·РґР°РЅ", output_gcode)
 
 
     def _load_profile(self) -> AdapterResult:
@@ -400,6 +469,8 @@ class CuraEngineSlicer:
             "M83 ; relative extrusion for filament-change retract",
             f"G1 E-{FILAMENT_CHANGE_RETRACT_MM:g} F{FILAMENT_CHANGE_MOVE_FEEDRATE} ; retract before lift",
             f"G1 Z{FILAMENT_CHANGE_Z_LIFT_MM:g} F{FILAMENT_CHANGE_MOVE_FEEDRATE} ; lift for filament change",
+            "M17 X Y Z ; keep motion axes locked during filament change",
+            "M84 S0 ; disable stepper idle timeout during filament change",
             f"@pause Change filament at Z={height_mm:.2f} mm",
             f"G1 Z-{FILAMENT_CHANGE_Z_LIFT_MM:g} F{FILAMENT_CHANGE_MOVE_FEEDRATE} ; return to print height",
             "G90" if gcode_state["xyz_absolute"] else "G91",
@@ -494,9 +565,9 @@ class OctoPrintController:
 
     def _preflight(self) -> AdapterResult | None:
         if not self.settings.octoprint.enabled:
-            return AdapterResult(False, "OctoPrint выключен в config/app.yaml")
+            return AdapterResult(False, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
         if not self.settings.octoprint.api_key:
-            return AdapterResult(False, "OCTOPRINT_API_KEY не задан в .env")
+            return AdapterResult(False, "OCTOPRINT_API_KEY РЅРµ Р·Р°РґР°РЅ РІ .env")
         return None
 
     def _headers(self) -> dict[str, str]:
@@ -799,7 +870,7 @@ class OctoPrintController:
 
     def _ensure_connected_legacy(self, attempts: int = 3, settle_seconds: float = 1.0) -> AdapterResult:
         if not self.settings.octoprint.enabled:
-            return AdapterResult(True, "OctoPrint выключен в config/app.yaml", extra={"skipped": True})
+            return AdapterResult(True, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml", extra={"skipped": True})
 
         last_message = ""
         for attempt in range(max(1, attempts)):
@@ -881,9 +952,9 @@ class OctoPrintController:
 
     def upload_and_print(self, gcode_path: Path) -> AdapterResult:
         if not self.settings.octoprint.enabled:
-            return AdapterResult(False, "OctoPrint выключен в config/app.yaml")
+            return AdapterResult(False, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
         if not self.settings.octoprint.api_key:
-            return AdapterResult(False, "OCTOPRINT_API_KEY не задан в .env")
+            return AdapterResult(False, "OCTOPRINT_API_KEY РЅРµ Р·Р°РґР°РЅ РІ .env")
 
         url = f"{self.settings.octoprint.base_url}/api/files/local"
         headers = {"X-Api-Key": self.settings.octoprint.api_key}
@@ -900,7 +971,7 @@ class OctoPrintController:
         except Exception as exc:  # pragma: no cover - integration path
             return AdapterResult(False, f"OctoPrint upload failed: {exc}")
 
-        return AdapterResult(True, "G-code отправлен в OctoPrint", gcode_path)
+        return AdapterResult(True, "G-code РѕС‚РїСЂР°РІР»РµРЅ РІ OctoPrint", gcode_path)
 
     def set_bed_target(self, target_c: int) -> AdapterResult:
         preflight = self._preflight()
@@ -1006,9 +1077,9 @@ class OctoPrintController:
 
     def get_job(self) -> AdapterResult:
         if not self.settings.octoprint.enabled:
-            return AdapterResult(False, "OctoPrint выключен в config/app.yaml")
+            return AdapterResult(False, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
         if not self.settings.octoprint.api_key:
-            return AdapterResult(False, "OCTOPRINT_API_KEY не задан в .env")
+            return AdapterResult(False, "OCTOPRINT_API_KEY РЅРµ Р·Р°РґР°РЅ РІ .env")
 
         try:
             response = httpx.get(
@@ -1023,9 +1094,9 @@ class OctoPrintController:
 
     def get_printer(self) -> AdapterResult:
         if not self.settings.octoprint.enabled:
-            return AdapterResult(False, "OctoPrint выключен в config/app.yaml")
+            return AdapterResult(False, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
         if not self.settings.octoprint.api_key:
-            return AdapterResult(False, "OCTOPRINT_API_KEY не задан в .env")
+            return AdapterResult(False, "OCTOPRINT_API_KEY РЅРµ Р·Р°РґР°РЅ РІ .env")
 
         try:
             response = httpx.get(

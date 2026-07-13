@@ -521,6 +521,48 @@ class Database:
                 )
         return self.get_batch(batch_id)
 
+    def reset_queued_batches_for_rebuild(self, message: str) -> dict[str, Any]:
+        updated = now_iso()
+        with self.engine.begin() as conn:
+            batch_ids = list(
+                conn.execute(
+                    select(print_batches.c.id)
+                    .where(print_batches.c.status == statuses.QUEUED)
+                    .order_by(print_batches.c.created_at.asc())
+                ).scalars()
+            )
+            if not batch_ids:
+                return {"batch_ids": [], "order_ids": [], "orders_reset": 0}
+
+            order_ids = list(
+                conn.execute(
+                    select(print_batch_items.c.order_id)
+                    .select_from(print_batch_items.join(orders, orders.c.id == print_batch_items.c.order_id))
+                    .where(
+                        and_(
+                            print_batch_items.c.batch_id.in_(batch_ids),
+                            orders.c.archived_at.is_(None),
+                            orders.c.status == statuses.QUEUED,
+                        )
+                    )
+                    .order_by(orders.c.created_at.asc())
+                ).scalars()
+            )
+
+            conn.execute(
+                print_batches.update()
+                .where(print_batches.c.id.in_(batch_ids))
+                .values(status=statuses.ERROR, updated_at=updated, error_message=message)
+            )
+            if order_ids:
+                conn.execute(
+                    orders.update()
+                    .where(orders.c.id.in_(order_ids))
+                    .values(status=statuses.STL_READY, batch_id=None, updated_at=updated, error_message=None)
+                )
+
+        return {"batch_ids": batch_ids, "order_ids": order_ids, "orders_reset": len(order_ids)}
+
     def update_batch_files(
         self,
         batch_id: str,

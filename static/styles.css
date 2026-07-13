@@ -941,8 +941,6 @@ label {
   align-content: center;
   justify-items: center;
   gap: 2px;
-  min-width: 28px;
-  min-height: 20px;
   padding: 4px;
   overflow: hidden;
   color: #0f1f1d;

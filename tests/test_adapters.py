@@ -1,10 +1,21 @@
 from dataclasses import replace
 from pathlib import Path
 import subprocess
+import struct
 
 from keychain_fair.adapters import AdapterResult, CuraEngineSlicer, OctoPrintController, OpenScadModelGenerator
 from keychain_fair.config import PROJECT_ROOT
 from tests.support import make_settings
+
+
+def write_triangle_stl(path, vertices):
+    with path.open("wb") as handle:
+        handle.write(b"test stl".ljust(80, b" "))
+        handle.write(struct.pack("<I", 1))
+        handle.write(struct.pack("<fff", 0.0, 0.0, 1.0))
+        for vertex in vertices:
+            handle.write(struct.pack("<fff", *vertex))
+        handle.write(struct.pack("<H", 0))
 
 
 def make_cura_settings(tmp_path, profile_lines, base_height_mm=3.2):
@@ -134,11 +145,13 @@ def test_cura_slicer_inserts_filament_change_pause_at_base_height(tmp_path, monk
     lines = Path(result.output_path).read_text(encoding="utf-8").splitlines()
     pause_index = lines.index("@pause Change filament at Z=1.90 mm")
     assert lines.index("G1 X1 Y1 E1") < pause_index < lines.index("G0 X0 Y0 Z2.1")
-    pause_block = lines[pause_index - 6 : pause_index + 7]
+    pause_block = lines[pause_index - 8 : pause_index + 7]
     assert "G91 ; relative positioning for filament-change lift" in pause_block
     assert "M83 ; relative extrusion for filament-change retract" in pause_block
     assert "G1 E-40 F3000 ; retract before lift" in pause_block
     assert "G1 Z100 F3000 ; lift for filament change" in pause_block
+    assert "M17 X Y Z ; keep motion axes locked during filament change" in pause_block
+    assert "M84 S0 ; disable stepper idle timeout during filament change" in pause_block
     assert "G1 Z-100 F3000 ; return to print height" in pause_block
     assert "G90" in pause_block
     assert "M82" in pause_block
@@ -184,6 +197,27 @@ def test_openscad_model_scale_keeps_z_thickness(tmp_path, monkeypatch):
     assert "    20.0," in wrapper_text
     assert "    3.2," in wrapper_text
     assert "    8.6" in wrapper_text
+
+
+def test_batch_stl_merge_translates_order_meshes_without_openscad(tmp_path):
+    settings = make_settings(tmp_path)
+    first_stl = tmp_path / "first.stl"
+    second_stl = tmp_path / "second.stl"
+    write_triangle_stl(first_stl, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)])
+    write_triangle_stl(second_stl, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)])
+
+    result = OpenScadModelGenerator(settings).combine_batch_stl(
+        "batch_merge",
+        [
+            {"order": {"stl_path": str(first_stl)}, "x_mm": 8.0, "y_mm": 8.0},
+            {"order": {"stl_path": str(second_stl)}, "x_mm": 20.0, "y_mm": 30.0},
+        ],
+    )
+
+    data = Path(result.output_path).read_bytes()
+    assert result.success is True
+    assert struct.unpack("<I", data[80:84])[0] == 2
+    assert struct.unpack("<fff", data[84 + 50 + 12 : 84 + 50 + 24]) == (20.0, 30.0, 0.0)
 
 
 def test_octoprint_connect_payload_uses_saved_preferences(monkeypatch):

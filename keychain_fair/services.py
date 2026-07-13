@@ -167,7 +167,23 @@ class OrderService:
         with self._queue_lock:
             recovered_orders = self.database.reset_orphan_printing_orders()
             generation = self.process_paid_orders()
+            pending_ready_orders = [
+                order
+                for order in self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)
+                if order.get("paid_at")
+            ]
+            if pending_ready_orders:
+                rebuilt_queued_batches = self.database.reset_queued_batches_for_rebuild(
+                    "Batch rebuilt because the print bed was prepared again."
+                )
+            else:
+                rebuilt_queued_batches = {"batch_ids": [], "order_ids": [], "orders_reset": 0}
             batching = self.build_print_batches()
+            if rebuilt_queued_batches["batch_ids"]:
+                batching["diagnostics"].append(
+                    f"Rebuilt {len(rebuilt_queued_batches['batch_ids'])} queued batch(es) with "
+                    f"{rebuilt_queued_batches['orders_reset']} queued order(s)."
+                )
             if recovered_orders["order_ids"]:
                 batching["diagnostics"].append(
                     f"Recovered {len(recovered_orders['order_ids'])} paid order(s) that were marked printing before preparation."
@@ -179,6 +195,7 @@ class OrderService:
                     "skipped": True,
                 },
                 "recovered_orders": recovered_orders,
+                "rebuilt_queued_batches": rebuilt_queued_batches,
                 "generation": generation,
                 "batching": batching,
             }
