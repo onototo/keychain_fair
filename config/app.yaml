@@ -37,3 +37,8 @@ octoprint:
   enabled: true
   base_url: http://127.0.0.1:5000
   api_key_env: OCTOPRINT_API_KEY
+  printer_port: COM8
+  baudrate: 250000
+  printer_profile: _default
+  save_connection: true
+  autoconnect: true

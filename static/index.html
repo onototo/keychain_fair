@@ -48,9 +48,13 @@
                 />
               </label>
               <label id="printLine1Field" hidden>
-                Текст
+                Строка 1
                 <input name="print_line_1" maxlength="48" />
                 <span id="customTextHelp" class="small muted"></span>
+              </label>
+              <label id="printLine2Field" hidden>
+                Строка 2
+                <input name="print_line_2" maxlength="48" />
               </label>
               <label>
                 Телефон
@@ -77,11 +81,6 @@
               <select name="size_id" id="sizeSelect"></select>
             </label>
 
-            <div id="elementsSection">
-              <div class="small muted">Что печатаем</div>
-              <div id="elements" class="choices"></div>
-            </div>
-
             <button type="submit">Подтвердить дизайн</button>
           </div>
         </form>
@@ -96,11 +95,7 @@
         <div class="panel-body">
           <div class="preview-wrap">
             <div id="preview" class="keychain-preview">
-              <div class="keychain-hole"></div>
-              <div id="previewElements" class="preview-elements"></div>
-              <div id="previewStack" class="preview-stack"></div>
-              <div id="previewCar" class="preview-car">1234 AB-7</div>
-              <div id="previewPhone" class="preview-phone">375291234567</div>
+              <img id="previewImage" class="preview-image" src="/static/design-previews/fallback.png" alt="" />
             </div>
           </div>
         </div>

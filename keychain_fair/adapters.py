@@ -686,129 +686,16 @@ class OctoPrintController:
         normalized = state.strip().lower()
         return any(word in normalized for word in ["opening", "connecting", "detecting"])
 
-    @staticmethod
-    def _local_usb_serial_ports() -> list[str]:
-        if os.name != "nt":
-            return []
-        command = [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            (
-                "$ErrorActionPreference='SilentlyContinue'; "
-                "Get-CimInstance Win32_SerialPort | "
-                "Where-Object { "
-                "$_.Name -match 'CP210|Silicon Labs|USB.*Serial|UART|CH340|CH341|FTDI' "
-                "-or $_.PNPDeviceID -match '^USB\\\\' "
-                "} | "
-                "ForEach-Object { $_.DeviceID }"
-            ),
-        ]
-        try:
-            completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=10)
-        except Exception:
-            return []
-        ports: list[str] = []
-        for line in completed.stdout.splitlines():
-            match = re.search(r"\bCOM\d+\b", line.strip(), re.IGNORECASE)
-            if match:
-                port = match.group(0).upper()
-                if port not in ports:
-                    ports.append(port)
-        return ports
-
-    @staticmethod
-    def _available_profile_ids(options: dict[str, Any]) -> set[str]:
-        profiles = options.get("printerProfiles")
-        if not isinstance(profiles, list):
-            return set()
-        return {
-            item.get("id")
-            for item in profiles
-            if isinstance(item, dict) and item.get("id")
+    def _configured_connection_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "command": "connect",
+            "port": self.settings.octoprint.printer_port,
+            "baudrate": self.settings.octoprint.baudrate,
+            "printerProfile": self.settings.octoprint.printer_profile,
+            "save": self.settings.octoprint.save_connection,
+            "autoconnect": self.settings.octoprint.autoconnect,
         }
-
-    @classmethod
-    def _ordered_ports(cls, options: dict[str, Any]) -> list[str | None]:
-        ports = [str(port) for port in options.get("ports", []) if port]
-        preference = options.get("portPreference")
-        usb_ports = cls._local_usb_serial_ports()
-
-        def add_unique(target: list[str | None], value: str | None) -> None:
-            if value not in target:
-                target.append(value)
-
-        ordered: list[str | None] = []
-        for usb_port in usb_ports:
-            match = next((port for port in ports if port.upper() == usb_port.upper()), None)
-            if match:
-                add_unique(ordered, match)
-        if ordered:
-            return ordered
-        if preference and preference in ports:
-            add_unique(ordered, str(preference))
-        for port in sorted(ports, key=lambda value: (str(value).upper() == "VIRTUAL", str(value))):
-            add_unique(ordered, port)
-        add_unique(ordered, None)
-        return ordered
-
-    @staticmethod
-    def _ordered_baudrates(options: dict[str, Any]) -> list[int | None]:
-        baudrates = [int(value) for value in options.get("baudrates", []) if isinstance(value, int)]
-        preference = options.get("baudratePreference")
-        ordered: list[int | None] = []
-        preferred_first = [preference] if preference in {250000, 115200} else []
-        fallback_preferences = [] if preference in {250000, 115200, "AUTO", ""} else [preference]
-        for value in [*preferred_first, 250000, 115200, *fallback_preferences, *baudrates, None]:
-            if value in ("AUTO", ""):
-                continue
-            normalized = int(value) if isinstance(value, int) else None
-            if normalized not in ordered:
-                ordered.append(normalized)
-        return ordered
-
-    @classmethod
-    def _connection_payload_candidates(cls, connection_data: dict[str, Any]) -> list[dict[str, Any]]:
-        options = connection_data.get("options")
-        options = options if isinstance(options, dict) else {}
-        profile = options.get("printerProfilePreference")
-        profile_ids = cls._available_profile_ids(options)
-        profile = profile if profile and (not profile_ids or profile in profile_ids) else None
-        usb_ports = {port.upper() for port in cls._local_usb_serial_ports()}
-        preferred_port = str(options.get("portPreference") or "").upper()
-        preferred_baudrate = options.get("baudratePreference")
-
-        def should_save(payload: dict[str, Any]) -> bool:
-            port = str(payload.get("port") or "").upper()
-            baudrate = payload.get("baudrate")
-            if port and port in usb_ports:
-                return True
-            return (
-                not usb_ports
-                and bool(port)
-                and port == preferred_port
-                and baudrate == preferred_baudrate
-                and baudrate in {250000, 115200}
-            )
-
-        candidates: list[dict[str, Any]] = []
-        for port in cls._ordered_ports(options):
-            for baudrate in cls._ordered_baudrates(options):
-                payload: dict[str, Any] = {"command": "connect", "autoconnect": True}
-                if port:
-                    payload["port"] = port
-                if baudrate:
-                    payload["baudrate"] = baudrate
-                if profile:
-                    payload["printerProfile"] = profile
-                payload["save"] = should_save(payload)
-                if payload not in candidates:
-                    candidates.append(payload)
-        return candidates or [{"command": "connect", "save": False, "autoconnect": True}]
-
-    @staticmethod
-    def _preferred_connection_payload(connection_data: dict[str, Any]) -> dict[str, Any]:
-        return OctoPrintController._connection_payload_candidates(connection_data)[0]
+        return {key: value for key, value in payload.items() if value not in ("", None)}
 
     def get_connection(self) -> AdapterResult:
         preflight = self._preflight()
@@ -826,18 +713,16 @@ class OctoPrintController:
             return AdapterResult(False, f"OctoPrint connection status failed: {exc}")
         return AdapterResult(True, "OctoPrint connection status", extra=response.json())
 
-    def connect(self, connection_data: dict[str, Any] | None = None) -> AdapterResult:
+    def connect(self) -> AdapterResult:
         preflight = self._preflight()
         if preflight:
             return preflight
 
-        if connection_data is None:
-            current = self.get_connection()
-            if not current.success:
-                return current
-            connection_data = current.extra if isinstance(current.extra, dict) else {}
+        server = self.ensure_server_running()
+        if not server.success:
+            return server
 
-        payload = self._preferred_connection_payload(connection_data)
+        payload = self._configured_connection_payload()
         try:
             response = httpx.post(
                 f"{self.settings.octoprint.base_url}/api/connection",
@@ -848,49 +733,10 @@ class OctoPrintController:
             response.raise_for_status()
         except Exception as exc:  # pragma: no cover - integration path
             return AdapterResult(False, f"OctoPrint connect failed: {exc}", extra={"payload": payload})
-        return AdapterResult(True, "OctoPrint connect requested", extra={"payload": payload})
-
-    def connect_with_payload(self, payload: dict[str, Any]) -> AdapterResult:
-        preflight = self._preflight()
-        if preflight:
-            return preflight
-
-        try:
-            response = httpx.post(
-                f"{self.settings.octoprint.base_url}/api/connection",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json=payload,
-                timeout=5,
-            )
-            response.raise_for_status()
-        except Exception as exc:  # pragma: no cover - integration path
-            return AdapterResult(False, f"OctoPrint connect failed: {exc}", extra={"payload": payload})
-        return AdapterResult(True, "OctoPrint connect requested", extra={"payload": payload})
-
-    def disconnect(self) -> AdapterResult:
-        preflight = self._preflight()
-        if preflight:
-            return preflight
-
-        try:
-            response = httpx.post(
-                f"{self.settings.octoprint.base_url}/api/connection",
-                headers={**self._headers(), "Content-Type": "application/json"},
-                json={"command": "disconnect"},
-                timeout=5,
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - integration path
-            if exc.response.status_code == 409:
-                return AdapterResult(True, "OctoPrint already disconnected", extra={"status_code": exc.response.status_code})
-            return AdapterResult(
-                False,
-                f"OctoPrint disconnect failed: HTTP {exc.response.status_code}",
-                extra={"status_code": exc.response.status_code},
-            )
-        except Exception as exc:  # pragma: no cover - integration path
-            return AdapterResult(False, f"OctoPrint disconnect failed: {exc}")
-        return AdapterResult(True, "OctoPrint disconnect requested")
+        wait_result = self._wait_for_connected(wait_seconds=30.0)
+        if wait_result.success:
+            return AdapterResult(True, wait_result.message, extra={"payload": payload, "connection": wait_result.extra})
+        return AdapterResult(False, wait_result.message, extra={"payload": payload, "connection": wait_result.extra})
 
     def _wait_for_connected(self, wait_seconds: float = 8.0, poll_seconds: float = 0.5) -> AdapterResult:
         deadline = time.monotonic() + max(0.1, wait_seconds)
@@ -911,37 +757,6 @@ class OctoPrintController:
                 last_extra = probe.extra
             time.sleep(poll_seconds)
         return AdapterResult(False, last_message or "OctoPrint did not finish connecting", extra=last_extra)
-
-    def _ensure_connected_legacy(self, attempts: int = 3, settle_seconds: float = 1.0) -> AdapterResult:
-        if not self.settings.octoprint.enabled:
-            return AdapterResult(True, "OctoPrint РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml", extra={"skipped": True})
-
-        last_message = ""
-        for attempt in range(max(1, attempts)):
-            connection = self.get_connection()
-            if connection.success and isinstance(connection.extra, dict):
-                state = self._connection_state(connection.extra)
-                if self._is_connected_state(state):
-                    return AdapterResult(True, f"OctoPrint connected: {state}", extra=connection.extra)
-
-                connect_result = self.connect(connection.extra)
-                last_message = connect_result.message
-                if not connect_result.success:
-                    return connect_result
-            else:
-                last_message = connection.message
-
-            if attempt < attempts - 1:
-                time.sleep(settle_seconds)
-
-        final = self.get_connection()
-        if final.success and isinstance(final.extra, dict):
-            state = self._connection_state(final.extra)
-            if self._is_connected_state(state):
-                return AdapterResult(True, f"OctoPrint connected: {state}", extra=final.extra)
-            last_message = f"OctoPrint state is {state or 'unknown'}"
-
-        return AdapterResult(False, last_message or final.message)
 
     def ensure_connected(self, attempts: int = 2, settle_seconds: float = 1.0) -> AdapterResult:
         with self._connection_lock:
@@ -967,18 +782,8 @@ class OctoPrintController:
                     if wait_result.success:
                         return wait_result
                     last_message = wait_result.message
-
-                for payload in self._connection_payload_candidates(connection.extra):
-                    connect_result = self.connect_with_payload(payload)
-                    last_message = connect_result.message
-                    if not connect_result.success:
-                        continue
-                    wait_result = self._wait_for_connected(max(4.0, settle_seconds * 8))
-                    if wait_result.success:
-                        return wait_result
-                    last_message = wait_result.message
-                    self.disconnect()
-                    time.sleep(min(1.0, settle_seconds))
+                else:
+                    last_message = f"OctoPrint state is {state or 'unknown'}"
             else:
                 last_message = connection.message
 

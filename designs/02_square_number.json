@@ -61,98 +61,101 @@
     {
       "id": "standard",
       "label": "Стандартный",
-      "width_mm": 36,
-      "height_mm": 36,
+      "width_mm": 36.0,
+      "height_mm": 36.0,
       "thickness_mm": 2.1,
       "relief_height_mm": 0.8,
-      "font_size_mm": 9.5,
+      "font_size_mm": 11.5,
       "price": 15,
       "editor_params": {
-        "base_width_mm": 36,
-        "base_height_mm": 36,
+        "base_width_mm": 36.0,
+        "base_height_mm": 36.0,
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
-        "section_overlap_mm": 0,
+        "section_overlap_mm": 0.0,
         "hole": {
-          "x_mm": 6.2,
-          "y_mm": 29.8,
+          "x_mm": 3.8,
+          "y_mm": 32.4,
           "radius_mm": 2.25
         },
         "text_blocks": {
           "name": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 0,
-            "box_height_mm": 0,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
             "font_size_mm": 5.5,
             "relief_height_mm": 0.8
           },
           "car": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 22,
-            "box_height_mm": 10,
-            "font_size_mm": 9.5,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 1.0,
+            "box_width_mm": 26.0,
+            "box_height_mm": 13.0,
+            "font_size_mm": 11.5,
             "relief_height_mm": 0.8
           },
           "phone": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 24,
-            "box_height_mm": 8.6,
-            "font_size_mm": 6.8,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": -2.0,
+            "box_width_mm": 26.0,
+            "box_height_mm": 12.0,
+            "font_size_mm": 9.6,
             "relief_height_mm": 0.8
           }
         }
-      }
+      },
+      "model_scale": 1,
+      "legacy_model_scale": 1
     },
     {
       "id": "large",
       "label": "Большой",
-      "width_mm": 42,
-      "height_mm": 42,
+      "width_mm": 42.0,
+      "height_mm": 42.0,
       "thickness_mm": 2.1,
       "relief_height_mm": 0.8,
-      "font_size_mm": 11,
+      "font_size_mm": 12.5,
       "price": 18,
       "editor_params": {
-        "base_width_mm": 42,
-        "base_height_mm": 42,
+        "base_width_mm": 42.0,
+        "base_height_mm": 42.0,
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
-        "section_overlap_mm": 0,
+        "section_overlap_mm": 0.0,
         "hole": {
-          "x_mm": 6.8,
-          "y_mm": 35.2,
+          "x_mm": 4.0,
+          "y_mm": 38.0,
           "radius_mm": 2.35
         },
         "text_blocks": {
           "name": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 0,
-            "box_height_mm": 0,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
             "font_size_mm": 6.2,
             "relief_height_mm": 0.8
           },
           "car": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 26,
-            "box_height_mm": 11.6,
-            "font_size_mm": 11,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 2.5,
+            "box_width_mm": 32.0,
+            "box_height_mm": 14.0,
+            "font_size_mm": 12.5,
             "relief_height_mm": 0.8
           },
           "phone": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 28,
-            "box_height_mm": 10,
-            "font_size_mm": 7.8,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": -2.0,
+            "box_width_mm": 33.0,
+            "box_height_mm": 13.0,
+            "font_size_mm": 12.0,
             "relief_height_mm": 0.8
           }
         }
-      }
+      },
+      "model_scale": 1
     }
   ],
   "elements": []

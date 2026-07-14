@@ -163,23 +163,22 @@ async function showConfirmation(ctx: Context, session: DraftSession, design: Des
   const caption = orderSummary(design, session.data);
   const previewUrl = api.previewUrl(design);
 
-  if (!previewUrl) {
-    await ctx.reply(caption, { reply_markup: keyboard });
-    return;
+  if (previewUrl) {
+    try {
+      const response = await fetch(previewUrl);
+      if (!response.ok) throw new Error(`Preview request failed: ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await ctx.replyWithPhoto(new InputFile(buffer, `${design.id}.png`), {
+        caption,
+        reply_markup: keyboard,
+      });
+      return;
+    } catch (error) {
+      console.warn(error);
+    }
   }
 
-  try {
-    const response = await fetch(previewUrl);
-    if (!response.ok) throw new Error(`Preview request failed: ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await ctx.replyWithPhoto(new InputFile(buffer, `${design.id}.png`), {
-      caption,
-      reply_markup: keyboard,
-    });
-  } catch (error) {
-    console.warn(error);
-    await ctx.reply(caption, { reply_markup: keyboard });
-  }
+  await ctx.reply(caption, { reply_markup: keyboard });
 }
 
 async function currentSessionAndDesign(ctx: Context): Promise<{ session: DraftSession; design: Design } | null> {

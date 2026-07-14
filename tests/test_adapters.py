@@ -266,107 +266,77 @@ def test_batch_stl_merge_translates_order_meshes_without_openscad(tmp_path):
     assert struct.unpack("<fff", data[84 + 50 + 12 : 84 + 50 + 24]) == (-90.0, -80.0, 0.0)
 
 
-def test_octoprint_connect_payload_uses_saved_preferences(monkeypatch):
-    monkeypatch.setattr(OctoPrintController, "_local_usb_serial_ports", staticmethod(lambda: []))
+def test_octoprint_connect_uses_configured_payload(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    controller = OctoPrintController(settings)
+    posted = []
 
-    payload = OctoPrintController._preferred_connection_payload(
-        {
-            "current": {"state": "Closed"},
-            "options": {
-                "ports": ["COM8", "VIRTUAL"],
-                "baudrates": [250000, 115200],
-                "printerProfiles": [{"id": "_default", "name": "Default"}],
-                "portPreference": "COM8",
-                "baudratePreference": 250000,
-                "printerProfilePreference": "_default",
-            },
-        }
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **kwargs):
+        posted.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(controller, "ensure_server_running", lambda: AdapterResult(True, "fake server"))
+    monkeypatch.setattr(
+        controller,
+        "get_connection",
+        lambda: AdapterResult(True, "fake connection", extra={"current": {"state": "Operational"}}),
     )
+    monkeypatch.setattr("keychain_fair.adapters.httpx.post", fake_post)
 
-    assert payload == {
-        "command": "connect",
-        "save": True,
-        "autoconnect": True,
-        "port": "COM8",
-        "baudrate": 250000,
-        "printerProfile": "_default",
-    }
+    result = controller.connect()
 
-
-def test_octoprint_connect_candidates_prefer_detected_usb_serial_port(monkeypatch):
-    monkeypatch.setattr(OctoPrintController, "_local_usb_serial_ports", staticmethod(lambda: ["COM9"]))
-
-    candidates = OctoPrintController._connection_payload_candidates(
-        {
-            "current": {"state": "Closed"},
-            "options": {
-                "ports": ["COM4", "COM8", "COM9", "VIRTUAL"],
-                "baudrates": [250000, 115200],
-                "printerProfiles": [{"id": "_default", "name": "Default"}],
-                "portPreference": "COM8",
-                "baudratePreference": 250000,
-                "printerProfilePreference": "_default",
+    assert result.success is True
+    assert posted == [
+        (
+            f"{settings.octoprint.base_url}/api/connection",
+            {
+                "headers": {"X-Api-Key": "fake-key", "Content-Type": "application/json"},
+                "json": {
+                    "command": "connect",
+                    "port": "COM8",
+                    "baudrate": 250000,
+                    "printerProfile": "_default",
+                    "save": True,
+                    "autoconnect": True,
+                },
+                "timeout": 5,
             },
-        }
+        )
+    ]
+
+
+def test_octoprint_ensure_connected_reports_closed_without_autoconnect(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    controller = OctoPrintController(settings)
+
+    def fail_post(*args, **kwargs):
+        raise AssertionError("ensure_connected must not request OctoPrint connect")
+
+    monkeypatch.setattr(controller, "ensure_server_running", lambda: AdapterResult(True, "fake server"))
+    monkeypatch.setattr(
+        controller,
+        "get_connection",
+        lambda: AdapterResult(True, "fake connection", extra={"current": {"state": "Closed"}}),
     )
+    monkeypatch.setattr("keychain_fair.adapters.httpx.post", fail_post)
 
-    assert candidates[0]["port"] == "COM9"
-    assert candidates[0]["baudrate"] == 250000
-    assert {candidate.get("port") for candidate in candidates} == {"COM9"}
+    result = controller.ensure_connected(settle_seconds=0.01)
 
-
-def test_octoprint_connect_candidates_put_known_printer_baudrate_before_polluted_preference(monkeypatch):
-    monkeypatch.setattr(OctoPrintController, "_local_usb_serial_ports", staticmethod(lambda: ["COM8"]))
-
-    candidates = OctoPrintController._connection_payload_candidates(
-        {
-            "current": {"state": "Closed"},
-            "options": {
-                "ports": ["COM4", "COM8"],
-                "baudrates": [19200, 250000, 115200],
-                "printerProfiles": [{"id": "_default", "name": "Default"}],
-                "portPreference": "COM4",
-                "baudratePreference": 19200,
-                "printerProfilePreference": "_default",
-            },
-        }
-    )
-
-    assert candidates[0]["port"] == "COM8"
-    assert candidates[0]["baudrate"] == 250000
-    assert candidates[0]["save"] is True
-    assert all(candidate["port"] == "COM8" for candidate in candidates)
+    assert result.success is False
+    assert result.message == "OctoPrint state is Closed"
 
 
-def test_octoprint_connect_candidates_do_not_save_low_confidence_probes(monkeypatch):
-    monkeypatch.setattr(OctoPrintController, "_local_usb_serial_ports", staticmethod(lambda: []))
-
-    candidates = OctoPrintController._connection_payload_candidates(
-        {
-            "current": {"state": "Closed"},
-            "options": {
-                "ports": ["COM4", "COM8"],
-                "baudrates": [19200, 250000, 115200],
-                "portPreference": "COM4",
-                "baudratePreference": 19200,
-            },
-        }
-    )
-
-    assert candidates[0]["port"] == "COM4"
-    assert candidates[0]["baudrate"] == 250000
-    assert candidates[0]["save"] is False
-
-
-def test_octoprint_ensure_connected_waits_for_transient_state_without_disconnect(tmp_path):
+def test_octoprint_ensure_connected_waits_for_transient_state(tmp_path):
     settings = make_settings(tmp_path, octoprint_enabled=True)
 
     class TransientPrinter(OctoPrintController):
         def __init__(self):
             super().__init__(settings)
             self.states = ["Opening serial connection", "Operational"]
-            self.connects = 0
-            self.disconnects = 0
 
         def ensure_server_running(self, wait_seconds=25.0):
             return AdapterResult(True, "fake server")
@@ -375,21 +345,11 @@ def test_octoprint_ensure_connected_waits_for_transient_state_without_disconnect
             state = self.states.pop(0)
             return AdapterResult(True, "fake connection", extra={"current": {"state": state}})
 
-        def connect_with_payload(self, payload):
-            self.connects += 1
-            return AdapterResult(True, "fake connect")
-
-        def disconnect(self):
-            self.disconnects += 1
-            return AdapterResult(True, "fake disconnect")
-
     controller = TransientPrinter()
 
     result = controller.ensure_connected(settle_seconds=0.01)
 
     assert result.success is True
-    assert controller.connects == 0
-    assert controller.disconnects == 0
 
 
 def test_octoprint_server_autostart_for_local_base_url(tmp_path, monkeypatch):
