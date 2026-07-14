@@ -53,6 +53,12 @@ function formatTime(value) {
   return value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 }
 
+function formatPrice(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return `${number.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} BYN`;
+}
+
 function escapeHtml(value) {
   const node = document.createElement("div");
   node.textContent = value ?? "";
@@ -88,6 +94,7 @@ function startLock(seconds) {
 
 function orderCard(order) {
   const paid = Boolean(order.paid_at);
+  const price = formatPrice(order.price);
   const card = document.createElement("article");
   card.className = `cashier-order ${paid ? "is-paid" : "is-unpaid"}`;
   card.innerHTML = `
@@ -99,6 +106,7 @@ function orderCard(order) {
       <div class="muted">${escapeHtml(order.design_name)} · ${escapeHtml(order.size_label)}</div>
     </div>
     <div class="cashier-payment">
+      <div class="cashier-price">${price ? escapeHtml(price) : "Цена не задана"}</div>
       <strong>${paid ? "Оплачен" : "Не оплачен"}</strong>
       <button class="${paid ? "danger" : ""}" data-payment="${paid ? "unpaid" : "paid"}">
         ${paid ? "Снять оплату" : "Отметить оплаченным"}

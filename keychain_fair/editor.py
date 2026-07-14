@@ -8,6 +8,8 @@ import shutil
 from typing import Any
 import uuid
 
+from .validation import normalize_by_car_number, split_by_car_number
+
 
 DEFAULT_BASE_HEIGHT_MM = 3.2
 DEFAULT_RELIEF_HEIGHT_MM = 0.8
@@ -29,7 +31,7 @@ TEXT_BLOCK_FIELDS = (
 STACKED_OVERLAP_INDEX = 25
 DEFAULT_SAMPLE_TEXT = {
     "customer_name": "Nikita",
-    "car_number": "A123BC77",
+    "car_number": "1234AB7",
     "phone": "375291234567",
 }
 
@@ -193,7 +195,7 @@ def default_editor_params(design: dict[str, Any], size: dict[str, Any], base_hei
         base_height = raw_height * scale
         font_size = _float(size.get("font_size_mm"), 7.0) * scale
         hole_x = 0.0 if is_stacked_design(design) else (7.0 if design.get("id") == "rounded_tag" else 6.5)
-        hole_y = 0.0 if is_stacked_design(design) else base_height / 2
+        hole_y = 0.0 if is_stacked_design(design) else (base_height / 2 if design.get("id") == "rounded_tag" else max(6.5, base_height - 6.5))
         hole_radius = max(1.2, base_height * 0.10) if is_stacked_design(design) else 2.35
         base = {
             "base_width_mm": round(base_width, 3),
@@ -232,7 +234,7 @@ def normalize_editor_params(
             "section_overlap_mm": round(_default_overlap_mm(design, size), 3) if is_stacked_design(design) else 0.0,
             "hole": {
                 "x_mm": 0.0 if is_stacked_design(design) else (7.0 if design.get("id") == "rounded_tag" else 6.5),
-                "y_mm": 0.0 if is_stacked_design(design) else base_height / 2,
+                "y_mm": 0.0 if is_stacked_design(design) else (base_height / 2 if design.get("id") == "rounded_tag" else max(6.5, base_height - 6.5)),
                 "radius_mm": max(1.2, base_height * 0.10) if is_stacked_design(design) else 2.35,
             },
             "text_blocks": _default_text_blocks(design, base_width, base_height, font_size),
@@ -325,8 +327,8 @@ def designs_for_editor(designs: list[dict[str, Any]], base_height_mm: float = DE
 
 
 def _default_preview_elements(design: dict[str, Any]) -> list[str]:
-    if is_stacked_design(design):
-        return ["name", "car", "phone", "loop_left"]
+    if design.get("print_mode") == "by_number_single":
+        return ["car"]
     return list(design.get("default_elements") or [])
 
 
@@ -355,6 +357,23 @@ def preview_order_payload(
     if is_stacked_design(design) and not any(item.get("shape") in TEXT_BLOCK_KEYS for item in selected):
         selected.extend([{"id": "car", "shape": "car"}, {"id": "loop_left", "shape": "loop_left"}])
 
+    print_line_1 = str(sample["car_number"])
+    print_line_2 = ""
+    mode = str(design.get("print_mode") or "")
+    if mode == "by_number_square":
+        try:
+            print_line_1, print_line_2 = split_by_car_number(sample["car_number"])
+        except ValueError:
+            print_line_1, print_line_2 = "1234", "AB-7"
+    elif mode == "by_number_single":
+        try:
+            print_line_1 = normalize_by_car_number(sample["car_number"])
+        except ValueError:
+            print_line_1 = "1234 AB-7"
+    elif mode == "custom_text":
+        print_line_1 = str(sample_text.get("print_line_1") if isinstance(sample_text, dict) and sample_text.get("print_line_1") else sample["car_number"])
+        print_line_2 = str(sample_text.get("print_line_2") if isinstance(sample_text, dict) and sample_text.get("print_line_2") else sample["phone"])
+
     width, height = final_dimensions_mm(design, params, selected)
     car_block = params.get("text_blocks", {}).get("car", {}) if isinstance(params.get("text_blocks"), dict) else {}
     return {
@@ -362,6 +381,8 @@ def preview_order_payload(
         "customer_name": sample["customer_name"],
         "car_number": sample["car_number"],
         "phone": sample["phone"],
+        "print_line_1": print_line_1,
+        "print_line_2": print_line_2,
         "design_id": design["id"],
         "size_id": size["id"],
         "selected_elements": selected,

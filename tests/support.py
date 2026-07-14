@@ -157,12 +157,19 @@ def make_temp_design_settings(
     base_height_mm: float = 3.2,
     source_names: list[str] | None = None,
 ) -> AppSettings:
+    design_json_files = {
+        "stacked_plate_classic": "01_rectangular_number",
+        "square_plate": "02_square_number",
+        "classic_plate": "03_custom_rectangular",
+        "rounded_tag": "04_custom_oval",
+    }
     designs_dir = tmp_path / "designs"
     static_dir = tmp_path / "static"
     designs_dir.mkdir()
     static_dir.mkdir()
     for name in (source_names or [source_name]):
-        shutil.copy2(PROJECT_ROOT / "designs" / f"{name}.json", designs_dir / f"{name}.json")
+        json_name = design_json_files.get(name, name)
+        shutil.copy2(PROJECT_ROOT / "designs" / f"{json_name}.json", designs_dir / f"{json_name}.json")
         shutil.copy2(PROJECT_ROOT / "designs" / f"{name}.scad", designs_dir / f"{name}.scad")
     return replace(make_settings(tmp_path, base_height_mm=base_height_mm), base_dir=tmp_path, designs_dir=designs_dir)
 
@@ -198,22 +205,30 @@ def ready_printer(settings):
 def order_payload(
     *,
     customer_name: str = "Anna",
-    car_number: str = "A123BC77",
+    car_number: str = "1234 AB-7",
     phone: str = "375291234567",
     design_id: str = "classic_plate",
     size_id: str = "standard",
     elements: list[str] | None = None,
+    print_line_1: str = "Hello",
+    print_line_2: str = "",
     idempotency_key: str = "test-order-flow-1",
+    client_id: str | None = None,
 ) -> dict:
-    return {
+    payload = {
         "customer_name": customer_name,
         "car_number": car_number,
         "phone": phone,
         "design_id": design_id,
         "size_id": size_id,
-        "elements": ["heart"] if elements is None else elements,
+        "elements": [] if elements is None else elements,
+        "print_line_1": print_line_1,
+        "print_line_2": print_line_2,
         "idempotency_key": idempotency_key,
     }
+    if client_id is not None:
+        payload["client_id"] = client_id
+    return payload
 
 
 def create_order(client, **overrides) -> str:

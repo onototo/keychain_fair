@@ -9,6 +9,7 @@ const state = {
 const form = document.querySelector("#orderForm");
 const designsNode = document.querySelector("#designs");
 const sizeSelect = document.querySelector("#sizeSelect");
+const elementsSection = document.querySelector("#elementsSection");
 const elementsNode = document.querySelector("#elements");
 const messageNode = document.querySelector("#message");
 const submitOrderButton = document.querySelector("#submitOrderButton");
@@ -22,13 +23,17 @@ const designName = document.querySelector("#designName");
 const customerNameInput = form.elements.customer_name;
 const carNumberInput = form.elements.car_number;
 const phoneInput = form.elements.phone;
+const printLine1Input = form.elements.print_line_1;
+const carNumberField = document.querySelector("#carNumberField");
+const printLine1Field = document.querySelector("#printLine1Field");
+const customTextHelp = document.querySelector("#customTextHelp");
 
 const NAME_VALID_RE = /^[A-Za-zА-Яа-яЁёІіЇїЄєЎўҐґ ]{2,30}$/;
 const NAME_BLOCKED_RE = /[^A-Za-zА-Яа-яЁёІіЇїЄєЎўҐґ ]/g;
-const RU_CAR_RE = /^[ABEKMHOPCTYXАВЕКМНОРСТУХ][0-9]{3}[ABEKMHOPCTYXАВЕКМНОРСТУХ]{2}[0-9]{2,3}$/;
-const BY_CAR_RE = /^[0-9]{4}[ABCEHIKMOPTXАВСЕНІКМОРТХ]{2}[1-7]$/;
-const CAR_BLOCKED_RE = /[^0-9A-Za-zА-Яа-яЁёІі]/g;
-const PHONE_RE = /^(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})$/;
+const BY_CAR_RE = /^[0-9]{4}[ABCEHIKMOPTX]{2}[1-7]$/;
+const BY_CAR_DISPLAY_RE = /^[0-9]{4}\s[ABCEHIKMOPTX]{2}-[1-7]$/;
+const CAR_BLOCKED_RE = /[^0-9A-Za-z]/g;
+const PHONE_RE = /^\+?(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})$/;
 const CONTENT_IDS = ["name", "car", "phone"];
 const LOOP_SIDE_IDS = ["loop_left", "loop_right"];
 
@@ -46,6 +51,14 @@ function selectedSize(design) {
 
 function isStackedDesign(design) {
   return design?.layout === "stacked_plate";
+}
+
+function isCustomDesign(design) {
+  return design?.print_mode === "custom_text";
+}
+
+function isSquareNumberDesign(design) {
+  return design?.print_mode === "by_number_square";
 }
 
 function defaultElementIds(design) {
@@ -134,6 +147,34 @@ function resetOrderKey() {
   state.orderKey = null;
 }
 
+function currentClientId() {
+  const storageKey = "keychain_fair_client_id";
+  let value = window.localStorage.getItem(storageKey);
+  if (!value) {
+    value = newOrderKey();
+    window.localStorage.setItem(storageKey, value);
+  }
+  return value;
+}
+
+function customTextLimits(design = selectedDesign(), size = selectedSize(design)) {
+  return size?.custom_text_limits || { max_total_chars: 48, max_line_1_chars: 24, max_line_2_chars: 24 };
+}
+
+function splitCustomText(value, limits = customTextLimits()) {
+  const cleaned = String(value || "").trim().replace(/\s+/g, " ");
+  const firstLimit = Number(limits.max_line_1_chars || 24);
+  const secondLimit = Number(limits.max_line_2_chars || 24);
+  if (cleaned.length <= firstLimit) return [cleaned, ""];
+  const spaces = [...cleaned].map((char, index) => (char === " " ? index : -1)).filter((index) => {
+    return index > 0 && index <= firstLimit && cleaned.slice(index + 1).trim().length <= secondLimit;
+  });
+  const splitAt = spaces.length
+    ? spaces.reduce((best, index) => (Math.abs(index - cleaned.length / 2) < Math.abs(best - cleaned.length / 2) ? index : best), spaces[0])
+    : Math.min(firstLimit, Math.max(1, cleaned.length - secondLimit));
+  return [cleaned.slice(0, splitAt).trim(), cleaned.slice(splitAt).trim()];
+}
+
 function setSubmitting(isSubmitting) {
   state.submitting = isSubmitting;
   if (!submitOrderButton) return;
@@ -147,37 +188,67 @@ function sanitizeName(value) {
 }
 
 function sanitizeCarNumber(value) {
-  return String(value).replace(/[\s-]+/g, "").replace(CAR_BLOCKED_RE, "").toUpperCase().slice(0, 9);
+  const compact = String(value).replace(/[\s-]+/g, "").replace(CAR_BLOCKED_RE, "").toUpperCase().slice(0, 7);
+  if (/^[0-9]{4}/.test(compact) && compact.length > 4) {
+    const digits = compact.slice(0, 4);
+    const letters = compact.slice(4, 6);
+    const region = compact.slice(6, 7);
+    return `${digits}${letters ? ` ${letters}` : ""}${region ? `-${region}` : ""}`;
+  }
+  return compact;
+}
+
+function sanitizePrintLine(value) {
+  return String(value).replace(/\s+/g, " ").slice(0, customTextLimits().max_total_chars || 48);
 }
 
 function sanitizePhone(value) {
-  return String(value).replace(/\D/g, "").slice(0, 12);
+  const cleaned = String(value).replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  const normalized = cleaned.startsWith("+") ? `+${cleaned.slice(1).replace(/\D/g, "")}` : cleaned.replace(/\D/g, "");
+  return normalized.slice(0, 13);
 }
 
 function sanitizeFields() {
   customerNameInput.value = sanitizeName(customerNameInput.value);
   carNumberInput.value = sanitizeCarNumber(carNumberInput.value);
   phoneInput.value = sanitizePhone(phoneInput.value);
+  printLine1Input.value = sanitizePrintLine(printLine1Input.value);
 }
 
 function validateFields() {
   const design = selectedDesign();
-  const printedElements = activeElementIds(design);
-  const carIsPrinted = !isStackedDesign(design) || printedElements.includes("car");
+  const custom = isCustomDesign(design);
   const name = customerNameInput.value.trim();
   const carNumber = carNumberInput.value.trim();
   const phone = phoneInput.value.trim();
+  const printLine1 = printLine1Input.value.trim();
+  const limits = customTextLimits(design, selectedSize(design));
+  const maxCustomLength = Number(limits.max_total_chars || 48);
 
-  carNumberInput.required = carIsPrinted;
+  carNumberInput.required = !custom;
+  printLine1Input.required = custom;
+  carNumberInput.disabled = custom;
+  printLine1Input.disabled = !custom;
+  printLine1Input.maxLength = maxCustomLength;
+  if (customTextHelp) {
+    customTextHelp.textContent = custom ? `Максимальная длина текста: ${maxCustomLength} символов.` : "";
+  }
   customerNameInput.setCustomValidity(
     !name || NAME_VALID_RE.test(name) ? "" : "Имя: только буквы латиницы/кириллицы, до 30 символов",
   );
   carNumberInput.setCustomValidity(
-    (!carIsPrinted && !carNumber) || !carNumber || RU_CAR_RE.test(carNumber) || BY_CAR_RE.test(carNumber)
+    custom || BY_CAR_DISPLAY_RE.test(carNumber) || BY_CAR_RE.test(carNumber.replace(/[\s-]+/g, ""))
       ? ""
-      : "Номер авто: РФ А123ВС77/А123ВС777 или РБ 1234АВ7",
+      : "Номер авто: РБ 1234 AB-7",
   );
-  phoneInput.setCustomValidity(!phone || PHONE_RE.test(phone) ? "" : "Телефон: только цифры, мобильный РБ или РФ");
+  phoneInput.setCustomValidity(!phone || PHONE_RE.test(phone) ? "" : "Телефон: цифры и необязательный +, мобильный РБ или РФ");
+  printLine1Input.setCustomValidity(
+    custom && !printLine1
+      ? "Введите текст для печати"
+      : custom && printLine1.length > maxCustomLength
+        ? `Максимальная длина текста: ${maxCustomLength} символов`
+        : "",
+  );
 }
 
 function renderDesigns() {
@@ -219,6 +290,15 @@ function renderOptions() {
   if (preferredSizeId) sizeSelect.value = preferredSizeId;
 
   elementsNode.innerHTML = "";
+  const custom = isCustomDesign(design);
+  carNumberField.hidden = custom;
+  printLine1Field.hidden = !custom;
+  if (customTextHelp) {
+    customTextHelp.textContent = custom ? `Максимальная длина текста: ${customTextLimits(design, selectedSize(design)).max_total_chars} символов.` : "";
+  }
+  elementsSection.hidden = true;
+  if (!design.elements?.length) return;
+  elementsSection.hidden = false;
   elementsNode.classList.toggle("content-choices", isStackedDesign(design));
   const checked = new Set(selectedElementIds(design));
   const contentElements = design.elements.filter((element) => element.kind !== "loop_side");
@@ -348,11 +428,20 @@ function steppedMetrics(slot, sectionCount) {
 
 function steppedLoopY(sectionCount) {
   const count = Math.max(1, sectionCount);
+  if (count === 1) return "18%";
   const sideHeight = 0.56;
   const overlap = count === 1 ? 0 : 0.08;
   const totalHeight = count === 1 ? 1 : count === 2 ? 1 + sideHeight - overlap : 1 + sideHeight * 2 - overlap * 2;
   const centerTop = count === 3 ? sideHeight - overlap : 0;
   return `${((centerTop + 0.5) / totalHeight) * 100}%`;
+}
+
+function splitByNumberForSquare(value) {
+  const compact = String(value || "").replace(/[\s-]+/g, "").toUpperCase();
+  if (/^[0-9]{4}[A-ZА-ЯІ]{2}[1-7]$/.test(compact)) {
+    return [compact.slice(0, 4), `${compact.slice(4, 6)}-${compact.slice(6)}`];
+  }
+  return ["1234", "AB-7"];
 }
 
 function sectionFontSize(section) {
@@ -370,8 +459,9 @@ function updatePreview() {
 
   const data = new FormData(form);
   const name = String(data.get("customer_name") || "Анна").trim();
-  const car = String(data.get("car_number") || "A123BC77").trim().toUpperCase();
+  const car = String(data.get("car_number") || "1234 AB-7").trim().toUpperCase();
   const phone = String(data.get("phone") || "375291234567").trim();
+  const printLine1 = String(data.get("print_line_1") || "").trim();
   const checked = checkedElementIds();
 
   if (isStackedDesign(design)) {
@@ -407,17 +497,28 @@ function updatePreview() {
     return;
   }
 
-  previewCar.textContent = car || "A123BC77";
-  previewPhone.textContent = phone || "375291234567";
-  previewElements.textContent = checked.map(iconForElement).join(" ");
+  if (isSquareNumberDesign(design)) {
+    const [top, bottom] = splitByNumberForSquare(car);
+    previewCar.textContent = top;
+    previewPhone.textContent = bottom;
+  } else if (isCustomDesign(design)) {
+    const [first, second] = splitCustomText(printLine1 || "Текст", customTextLimits(design, size));
+    previewCar.textContent = first || "Текст";
+    previewPhone.textContent = second;
+  } else {
+    previewCar.textContent = car || "1234 AB-7";
+    previewPhone.textContent = "";
+  }
+  previewElements.textContent = "";
   preview.style.background = design.accent || "#f4c542";
   preview.style.removeProperty("--model-preview-scale");
   preview.className = "keychain-preview";
   preview.classList.toggle("oval", design.id.includes("rounded"));
+  preview.classList.toggle("square", design.id.includes("square"));
   previewStack.hidden = true;
   previewCar.hidden = false;
-  previewPhone.hidden = false;
-  previewElements.hidden = false;
+  previewPhone.hidden = !previewPhone.textContent;
+  previewElements.hidden = true;
   designName.textContent = `${design.name} · ${size.label}`;
   priceNode.textContent = `${size.price || 0} BYN`;
 }
@@ -438,13 +539,22 @@ async function loadDesigns() {
 }
 
 form.addEventListener("input", (event) => {
-  if (event.target === customerNameInput || event.target === carNumberInput || event.target === phoneInput) {
+  if (
+    event.target === customerNameInput ||
+    event.target === carNumberInput ||
+    event.target === phoneInput ||
+    event.target === printLine1Input
+  ) {
     sanitizeFields();
     validateFields();
   }
   updatePreview();
 });
-sizeSelect.addEventListener("change", updatePreview);
+sizeSelect.addEventListener("change", () => {
+  sanitizeFields();
+  validateFields();
+  updatePreview();
+});
 elementsNode.addEventListener("change", (event) => {
   const design = selectedDesign();
   let checked = saveCheckedElements();
@@ -476,8 +586,11 @@ form.addEventListener("submit", async (event) => {
     phone: String(data.get("phone") || ""),
     design_id: state.selectedDesignId,
     size_id: String(data.get("size_id") || ""),
-    elements: checkedElementIds(),
+    elements: [],
+    print_line_1: String(data.get("print_line_1") || ""),
+    print_line_2: "",
     idempotency_key: currentOrderKey(),
+    client_id: currentClientId(),
   };
 
   try {
@@ -488,7 +601,9 @@ form.addEventListener("submit", async (event) => {
     });
     const result = await response.json();
     if (!response.ok) {
-      throw new Error(result.detail || "Заказ не создан");
+      const detail = result.detail;
+      const message = typeof detail === "string" ? detail : detail?.message;
+      throw new Error(message || "Заказ не создан");
     }
     resetOrderKey();
     window.location.href = `/status/${result.order.id}`;

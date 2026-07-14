@@ -1,21 +1,34 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import struct
 import threading
 from typing import Any
 
 from . import statuses
-from .adapters import AdapterResult, CuraEngineSlicer, NullNotifier, OctoPrintController, OpenScadModelGenerator
+from .adapters import AdapterResult, CuraEngineSlicer, NullNotifier, OctoPrintController, OpenScadModelGenerator, stl_bounds
 from .batching import layout_orders, write_batch_manifest
 from .config import AppSettings
 from .database import Database
 from .designs import DesignCatalog, DesignCatalogError
 from .editor import model_params_for_selection
+from .moderation import MUTE_SECONDS, contains_profanity
 from .models import OrderCreate
+from .validation import normalize_by_car_number, split_by_car_number
 
 
+MAX_UNPAID_ORDERS_PER_USER = 2
 CONTENT_SHAPES = {"name", "car", "phone"}
 LOOP_SHAPES = {"loop_left", "loop_right"}
+
+
+class OrderBlockedError(ValueError):
+    def __init__(self, message: str, status_code: int = 400, retry_after_seconds: int | None = None):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
 
 
 def _filament_change_height(order_or_item: dict[str, Any], fallback: float) -> float:
@@ -23,6 +36,95 @@ def _filament_change_height(order_or_item: dict[str, Any], fallback: float) -> f
         return round(float(order_or_item.get("thickness_mm", fallback)), 3)
     except (TypeError, ValueError):
         return round(fallback, 3)
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _seconds(value: Any) -> int | None:
+    number = _number(value)
+    if number is None:
+        return None
+    return max(0, int(number))
+
+
+def _flags(printer_data: dict[str, Any]) -> dict[str, Any]:
+    state = printer_data.get("state")
+    if not isinstance(state, dict):
+        return {}
+    flags = state.get("flags")
+    return flags if isinstance(flags, dict) else {}
+
+
+def _printer_reports_print_done(job_data: dict[str, Any], printer_data: dict[str, Any]) -> bool:
+    progress = job_data.get("progress") if isinstance(job_data.get("progress"), dict) else {}
+    completion = _number(progress.get("completion"))
+    elapsed_seconds = _seconds(progress.get("printTime"))
+    remaining_seconds = _seconds(progress.get("printTimeLeft"))
+    flags = _flags(printer_data)
+    job_state = str(job_data.get("state") or "").lower()
+
+    is_busy = bool(
+        flags.get("printing")
+        or flags.get("paused")
+        or flags.get("pausing")
+        or flags.get("cancelling")
+        or any(word in job_state for word in ["printing", "paused", "pausing", "cancelling"])
+    )
+    if is_busy:
+        return False
+    return bool(
+        (completion is not None and completion >= 99.9)
+        or (elapsed_seconds is not None and elapsed_seconds > 0 and remaining_seconds == 0)
+    )
+
+
+def _with_print_footprint(order: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(order)
+    stl_path = order.get("stl_path")
+    if not stl_path:
+        return enriched
+
+    try:
+        bounds = stl_bounds(Path(stl_path))
+    except (OSError, ValueError, struct.error, KeyError, TypeError, AttributeError):
+        return enriched
+
+    enriched["print_width_mm"] = max(float(order["width_mm"]), float(bounds["width_mm"]))
+    enriched["print_height_mm"] = max(float(order["height_mm"]), float(bounds["height_mm"]))
+    enriched["stl_bounds"] = bounds
+    return enriched
+
+
+def _split_custom_text(value: str, limits: dict[str, Any]) -> tuple[str, str]:
+    cleaned = " ".join(str(value).strip().split())
+    first_limit = int(limits.get("max_line_1_chars") or 14)
+    second_limit = int(limits.get("max_line_2_chars") or 14)
+    total_limit = int(limits.get("max_total_chars") or (first_limit + second_limit))
+
+    if len(cleaned) > total_limit:
+        raise DesignCatalogError(f"Custom text is too long. Maximum length is {total_limit} characters.")
+    if len(cleaned) <= first_limit:
+        return cleaned, ""
+
+    midpoint = len(cleaned) / 2
+    spaces = [
+        index
+        for index, char in enumerate(cleaned)
+        if char == " " and index <= first_limit and len(cleaned[index + 1 :].strip()) <= second_limit
+    ]
+    if spaces:
+        split_at = min(spaces, key=lambda index: abs(index - midpoint))
+        return cleaned[:split_at].strip(), cleaned[split_at + 1 :].strip()
+
+    split_at = min(first_limit, max(1, len(cleaned) - second_limit))
+    return cleaned[:split_at].strip(), cleaned[split_at:].strip()
 
 
 class OrderService:
@@ -46,10 +148,109 @@ class OrderService:
         self._queue_lock = threading.Lock()
 
     def create_order(self, payload: OrderCreate) -> dict[str, Any]:
+        if payload.idempotency_key:
+            existing = self.database.get_order_by_idempotency_key(payload.idempotency_key)
+            if existing is not None:
+                return existing
+
         selection = self.catalog.validate_selection(payload.design_id, payload.size_id, payload.elements)
-        self._validate_print_content(payload, selection)
+        identity = self._order_identity(payload)
+        if identity is not None:
+            self._ensure_not_muted(*identity)
+        if contains_profanity(
+            payload.customer_name,
+            payload.car_number,
+            payload.phone,
+            payload.print_line_1,
+            payload.print_line_2,
+        ):
+            if identity is not None:
+                self._mute_identity(*identity, reason="profanity")
+            raise OrderBlockedError(
+                "Order contains prohibited words. You can create a new order in 5 minutes.",
+                status_code=429,
+                retry_after_seconds=MUTE_SECONDS,
+            )
+        if identity is not None:
+            self._ensure_order_quota(*identity)
+        payload_data = self._print_payload(payload, selection.design)
         model_params = model_params_for_selection(selection, self.settings.model.base_height_mm)
-        return self.database.create_order(payload.model_dump(), selection, model_params)
+        return self.database.create_order(payload_data, selection, model_params)
+
+    def _order_identity(self, payload: OrderCreate) -> tuple[str, str] | None:
+        source = str(getattr(payload, "source", "") or "web")
+        if source == "telegram":
+            user_id = getattr(payload, "telegram_user_id", None)
+            chat_id = getattr(payload, "telegram_chat_id", None)
+            if user_id:
+                return "telegram_user_id", str(user_id)
+            if chat_id:
+                return "telegram_chat_id", str(chat_id)
+        if payload.client_id:
+            return "client_id", payload.client_id
+        return None
+
+    def _ensure_not_muted(self, identity_kind: str, identity_value: str) -> None:
+        mute = self.database.get_active_mute(identity_kind, identity_value)
+        if mute is None:
+            return
+        muted_until = datetime.fromisoformat(str(mute["muted_until"]))
+        retry_after = max(1, int((muted_until - datetime.now(timezone.utc)).total_seconds()))
+        raise OrderBlockedError(
+            f"You are temporarily muted. Try again in {retry_after} seconds.",
+            status_code=429,
+            retry_after_seconds=retry_after,
+        )
+
+    def _mute_identity(self, identity_kind: str, identity_value: str, reason: str) -> None:
+        muted_until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
+        self.database.set_user_mute(identity_kind, identity_value, muted_until.isoformat(), reason)
+
+    def _ensure_order_quota(self, identity_kind: str, identity_value: str) -> None:
+        count = self.database.count_unpaid_orders_for_identity(identity_kind, identity_value)
+        if count >= MAX_UNPAID_ORDERS_PER_USER:
+            raise OrderBlockedError(
+                "You can have only 2 unpaid orders. Please pay for an existing order before creating another one.",
+                status_code=429,
+            )
+
+    def _print_payload(self, payload: OrderCreate, design: dict[str, Any]) -> dict[str, Any]:
+        data = payload.model_dump()
+        data["elements"] = []
+        mode = str(design.get("print_mode") or "")
+
+        if mode == "by_number_square":
+            try:
+                first, second = split_by_car_number(payload.car_number)
+            except ValueError as exc:
+                raise DesignCatalogError(str(exc)) from exc
+            data["car_number"] = normalize_by_car_number(payload.car_number)
+            data["print_line_1"] = first
+            data["print_line_2"] = second
+            return data
+
+        if mode == "by_number_single":
+            try:
+                normalized = normalize_by_car_number(payload.car_number)
+            except ValueError as exc:
+                raise DesignCatalogError(str(exc)) from exc
+            data["car_number"] = normalized
+            data["print_line_1"] = normalized
+            data["print_line_2"] = ""
+            return data
+
+        if mode == "custom_text":
+            text = " ".join(item for item in [payload.print_line_1.strip(), payload.print_line_2.strip()] if item)
+            if not text:
+                raise DesignCatalogError("Print text is required for custom designs")
+            size = next((item for item in design.get("sizes", []) if item.get("id") == payload.size_id), None)
+            limits = size.get("custom_text_limits", {}) if isinstance(size, dict) else {}
+            first, second = _split_custom_text(text, limits)
+            data["print_line_1"] = first
+            data["print_line_2"] = second
+            return data
+
+        return data
 
     def _validate_print_content(self, payload: OrderCreate, selection: Any) -> None:
         if selection.design.get("layout") != "stacked_plate":
@@ -104,7 +305,7 @@ class OrderService:
         return {"generated": generated, "errors": errors}
 
     def build_print_batches(self) -> dict[str, Any]:
-        candidates = self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)
+        candidates = [_with_print_footprint(order) for order in self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)]
         ready_orders = [order for order in candidates if order.get("paid_at")]
         batches: list[dict[str, Any]] = []
         diagnostics: list[str] = []
@@ -353,5 +554,30 @@ class OrderService:
             raise ValueError(result.message)
         return {"ok": True, "message": result.message}
 
+    def complete_printing_batches_if_done(self, printer_status: dict[str, Any] | None = None) -> dict[str, Any]:
+        if not self.database.has_printing_batches():
+            return {"completed": False, "batches": [], "orders_updated": 0}
+
+        if printer_status is not None:
+            if printer_status.get("state") != "done_printing":
+                return {"completed": False, "batches": [], "orders_updated": 0}
+            result = self.database.complete_printing_batches()
+            return {"completed": bool(result["batches"] or result["orders_updated"]), **result}
+
+        if not self.settings.octoprint.enabled:
+            return {"completed": False, "batches": [], "orders_updated": 0}
+
+        job_result = self.printer.get_job()
+        printer_result = self.printer.get_printer()
+        job_data = job_result.extra if job_result.success and isinstance(job_result.extra, dict) else {}
+        printer_data = printer_result.extra if printer_result.success and isinstance(printer_result.extra, dict) else {}
+
+        if not _printer_reports_print_done(job_data, printer_data):
+            return {"completed": False, "batches": [], "orders_updated": 0}
+
+        result = self.database.complete_printing_batches()
+        return {"completed": bool(result["batches"] or result["orders_updated"]), **result}
+
     def run_queue(self) -> dict[str, Any]:
+        self.complete_printing_batches_if_done()
         return self.prepare_queue(fail_on_connection_error=False)

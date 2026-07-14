@@ -9,7 +9,7 @@ function content_count(values) =
 
 function center_kind(values) =
     content_count(values) == 1 ?
-        (contains(values, "car") ? "car" : (contains(values, "name") ? "name" : "phone")) :
+        (contains(values, "phone") ? "phone" : (contains(values, "name") ? "name" : "car")) :
     contains(values, "car") ? "car" :
     contains(values, "name") ? "name" :
     "phone";
@@ -175,7 +175,7 @@ module stacked_plate_keychain(customer_name, car_number, phone_number, selected_
     bottom_ratio = 0.56;
     overlap = count == 1 ? 0 : ep(editor_params, 25, 1.4);
     side_width_ratio = style == "classic" ? 0.78 : 0.82;
-    loop_side = contains(selected_elements, "loop_right") ? "right" : "left";
+    loop_side = "left";
     legacy_center_height = count == 1 ? plate_height :
         count == 2 ? (plate_height + overlap) / (1 + bottom_ratio) :
         (plate_height + 2 * overlap) / (1 + top_ratio + bottom_ratio);
@@ -195,7 +195,7 @@ module stacked_plate_keychain(customer_name, car_number, phone_number, selected_
     body_x = loop_side == "left" ? loop_space : 0;
     loop_x_local = loop_side == "left" ? -loop_outer * 0.92 : body_width + loop_outer * 0.92;
     loop_x = body_x + loop_x_local + ep(editor_params, 4, 0);
-    loop_y = center_y + center_height / 2 + ep(editor_params, 5, 0);
+    loop_y = center_y + center_height - loop_outer + ep(editor_params, 5, 0);
     border_width = style == "layered" ? 1.25 : 1.0;
 
     difference() {

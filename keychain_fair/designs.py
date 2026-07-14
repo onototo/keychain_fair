@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ class DesignCatalog:
             raw = json.loads(path.read_text(encoding="utf-8"))
             design = self._normalize_design(raw, path)
             designs.append(design)
-        return designs
+        return sorted(designs, key=lambda item: (float(item.get("sort_order", 999)), item["id"]))
 
     def load_public_designs(self) -> list[dict[str, Any]]:
         public_designs: list[dict[str, Any]] = []
@@ -103,6 +104,8 @@ class DesignCatalog:
             for key in ["id", "label", "width_mm", "height_mm", "thickness_mm", "font_size_mm"]:
                 if key not in size:
                     raise DesignCatalogError(f"{source_path.name} size misses '{key}'")
+            if design.get("print_mode") == "custom_text":
+                size["custom_text_limits"] = custom_text_limits_for_size(size)
 
         if design.get("default_size_id"):
             size_ids = {item["id"] for item in design["sizes"]}
@@ -135,3 +138,27 @@ class DesignCatalog:
 
         fallback = static_root / "design-previews" / "fallback.png"
         return "/static/design-previews/fallback.png", fallback
+
+
+def custom_text_limits_for_size(size: dict[str, Any]) -> dict[str, int]:
+    params = size.get("editor_params") if isinstance(size.get("editor_params"), dict) else {}
+    blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
+
+    def line_limit(block_name: str, fallback: int) -> int:
+        block = blocks.get(block_name) if isinstance(blocks.get(block_name), dict) else {}
+        try:
+            width = float(block.get("box_width_mm"))
+            font_size = float(block.get("font_size_mm"))
+        except (TypeError, ValueError):
+            return fallback
+        if width <= 0 or font_size <= 0:
+            return fallback
+        return max(1, math.floor(width * 1.35 / (font_size * 0.9)))
+
+    first = line_limit("car", 14)
+    second = line_limit("phone", 14)
+    return {
+        "max_total_chars": first + second,
+        "max_line_1_chars": first,
+        "max_line_2_chars": second,
+    }

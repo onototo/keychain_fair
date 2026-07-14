@@ -5,6 +5,11 @@ export type DesignSize = {
   width_mm?: number;
   height_mm?: number;
   row_height_mm?: number;
+  custom_text_limits?: {
+    max_total_chars: number;
+    max_line_1_chars: number;
+    max_line_2_chars: number;
+  };
 };
 
 export type DesignElement = {
@@ -19,6 +24,7 @@ export type Design = {
   name: string;
   description?: string;
   layout?: string;
+  print_mode?: string;
   preview_image?: string;
   default_elements?: string[];
   default_size_id?: string;
@@ -33,9 +39,10 @@ export type DraftData = {
   customerName?: string;
   phone?: string;
   carNumber?: string;
+  printLine1?: string;
 };
 
-export type DraftStep = "design" | "size" | "elements" | "loop" | "name" | "phone" | "car" | "confirm";
+export type DraftStep = "design" | "size" | "elements" | "loop" | "print_text" | "name" | "phone" | "car" | "confirm";
 
 export type DraftSession = {
   draftId: string;
@@ -56,6 +63,8 @@ export type OrderPayload = {
   design_id: string;
   size_id: string;
   elements: string[];
+  print_line_1?: string;
+  print_line_2?: string;
   idempotency_key: string;
   source: "telegram";
   telegram_chat_id: string;

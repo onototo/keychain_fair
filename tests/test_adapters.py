@@ -159,6 +159,52 @@ def test_cura_slicer_inserts_filament_change_pause_at_base_height(tmp_path, monk
     assert not any("E40" in line for line in pause_block)
 
 
+def test_cura_slicer_uses_explicit_filament_change_height(tmp_path, monkeypatch):
+    machine_json = tmp_path / "fdmprinter.def.json"
+    machine_json.write_text("{}", encoding="utf-8")
+    settings = make_cura_settings(
+        tmp_path,
+        [f"  settings_json_path: {machine_json.as_posix()}", "  settings:", "    machine_width: 220"],
+        base_height_mm=1.9,
+    )
+    plate = tmp_path / "plate.stl"
+    plate.write_text("solid plate\nendsolid plate\n", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        output = Path(command[command.index("-o") + 1])
+        output.write_text(
+            "\n".join(
+                [
+                    ";FLAVOR:Marlin",
+                    ";LAYER:8",
+                    "G0 X0 Y0 Z2.1",
+                    "G1 X1 Y1 E1",
+                    ";LAYER:9",
+                    "G0 X0 Y0 Z2.3",
+                    "G1 X2 Y2 E2",
+                    ";LAYER:10",
+                    "G0 X0 Y0 Z4.7",
+                    "G1 X3 Y3 E3",
+                    ";LAYER:11",
+                    "G0 X0 Y0 Z4.9",
+                    "G1 X4 Y4 E4",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("keychain_fair.adapters.subprocess.run", fake_run)
+
+    result = CuraEngineSlicer(settings).slice_plate(plate, "batch_explicit_pause", filament_change_height_mm=4.7)
+
+    assert result.success is True
+    lines = Path(result.output_path).read_text(encoding="utf-8").splitlines()
+    pause_index = lines.index("@pause Change filament at Z=4.70 mm")
+    assert lines.index("G1 X3 Y3 E3") < pause_index < lines.index("G0 X0 Y0 Z4.9")
+    assert "@pause Change filament at Z=1.90 mm" not in lines
+
+
 def test_openscad_model_scale_keeps_z_thickness(tmp_path, monkeypatch):
     fake_exe = tmp_path / "openscad.exe"
     fake_exe.write_text("fake", encoding="utf-8")
@@ -204,7 +250,7 @@ def test_batch_stl_merge_translates_order_meshes_without_openscad(tmp_path):
     first_stl = tmp_path / "first.stl"
     second_stl = tmp_path / "second.stl"
     write_triangle_stl(first_stl, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)])
-    write_triangle_stl(second_stl, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)])
+    write_triangle_stl(second_stl, [(-5.0, -2.0, 0.0), (2.0, -2.0, 0.0), (-5.0, 2.0, 0.0)])
 
     result = OpenScadModelGenerator(settings).combine_batch_stl(
         "batch_merge",
@@ -217,7 +263,7 @@ def test_batch_stl_merge_translates_order_meshes_without_openscad(tmp_path):
     data = Path(result.output_path).read_bytes()
     assert result.success is True
     assert struct.unpack("<I", data[80:84])[0] == 2
-    assert struct.unpack("<fff", data[84 + 50 + 12 : 84 + 50 + 24]) == (20.0, 30.0, 0.0)
+    assert struct.unpack("<fff", data[84 + 50 + 12 : 84 + 50 + 24]) == (-90.0, -80.0, 0.0)
 
 
 def test_octoprint_connect_payload_uses_saved_preferences(monkeypatch):

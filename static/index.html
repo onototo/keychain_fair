@@ -36,28 +36,33 @@
                   title="Только буквы латиницы/кириллицы, до 30 символов"
                 />
               </label>
-              <label>
+              <label id="carNumberField">
                 Номер авто
                 <input
                   name="car_number"
                   minlength="7"
                   maxlength="9"
                   autocapitalize="characters"
-                  pattern="([ABEKMHOPCTYXАВЕКМНОРСТУХ][0-9]{3}[ABEKMHOPCTYXАВЕКМНОРСТУХ]{2}[0-9]{2,3}|[0-9]{4}[ABCEHIKMOPTXАВСЕНІКМОРТХ]{2}[1-7])"
-                  title="РФ: А123ВС77 или А123ВС777. РБ: 1234АВ7"
+                  pattern="[0-9]{4}\s?[ABCEHIKMOPTX]{2}-?[1-7]"
+                  title="РБ латиницей: 1234 AB-7"
                 />
+              </label>
+              <label id="printLine1Field" hidden>
+                Текст
+                <input name="print_line_1" maxlength="48" />
+                <span id="customTextHelp" class="small muted"></span>
               </label>
               <label>
                 Телефон
                 <input
                   name="phone"
                   autocomplete="tel"
-                  inputmode="numeric"
+                  inputmode="tel"
                   required
                   minlength="11"
-                  maxlength="12"
-                  pattern="(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})"
-                  title="Только цифры. РФ: 79XXXXXXXXX или 89XXXXXXXXX, РБ: 37529XXXXXXX"
+                  maxlength="13"
+                  pattern="\+?(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})"
+                  title="Цифры и необязательный +. РФ: 79XXXXXXXXX или 89XXXXXXXXX, РБ: 37529XXXXXXX"
                 />
               </label>
             </div>
@@ -72,7 +77,7 @@
               <select name="size_id" id="sizeSelect"></select>
             </label>
 
-            <div>
+            <div id="elementsSection">
               <div class="small muted">Что печатаем</div>
               <div id="elements" class="choices"></div>
             </div>
@@ -94,7 +99,7 @@
               <div class="keychain-hole"></div>
               <div id="previewElements" class="preview-elements"></div>
               <div id="previewStack" class="preview-stack"></div>
-              <div id="previewCar" class="preview-car">A123BC77</div>
+              <div id="previewCar" class="preview-car">1234 AB-7</div>
               <div id="previewPhone" class="preview-phone">375291234567</div>
             </div>
           </div>

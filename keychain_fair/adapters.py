@@ -72,6 +72,14 @@ def _order_model_params(order: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _print_lines(order: dict[str, Any]) -> tuple[str, str]:
+    first = str(order.get("print_line_1") or "").strip()
+    second = str(order.get("print_line_2") or "").strip()
+    if first or second:
+        return first, second
+    return str(order.get("car_number") or ""), str(order.get("phone") or "")
+
+
 def _font_size_from_params(params: dict[str, Any], fallback: float) -> float:
     text_blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
     car_block = text_blocks.get("car") if isinstance(text_blocks.get("car"), dict) else {}
@@ -134,6 +142,34 @@ def _read_stl_triangles(path: Path) -> list[tuple[tuple[float, float, float], li
     if _binary_stl_triangle_count(data) is not None:
         return _read_binary_stl_triangles(data)
     return _read_ascii_stl_triangles(data.decode("utf-8", errors="ignore"))
+
+
+def stl_bounds(path: Path) -> dict[str, float]:
+    triangles = _read_stl_triangles(path)
+    points = [vertex for _normal, vertices in triangles for vertex in vertices]
+    if not points:
+        raise ValueError("STL has no vertices")
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    zs = [point[2] for point in points]
+    min_x = min(xs)
+    min_y = min(ys)
+    min_z = min(zs)
+    max_x = max(xs)
+    max_y = max(ys)
+    max_z = max(zs)
+    return {
+        "min_x_mm": min_x,
+        "min_y_mm": min_y,
+        "min_z_mm": min_z,
+        "max_x_mm": max_x,
+        "max_y_mm": max_y,
+        "max_z_mm": max_z,
+        "width_mm": max_x - min_x,
+        "height_mm": max_y - min_y,
+        "depth_mm": max_z - min_z,
+    }
 
 
 def _write_binary_stl(
@@ -201,6 +237,9 @@ class OpenScadModelGenerator:
         wrapper_path = target_dir / f"{file_stem}.scad"
         stl_path = target_dir / f"{file_stem}.stl"
         element_shapes = [item.get("shape", item["id"]) for item in order["selected_elements"]]
+        if design.get("print_mode") == "by_number_single" and not element_shapes:
+            element_shapes = ["car"]
+        print_line_1, print_line_2 = _print_lines(order)
         template_path = Path(design["template_path"]).resolve()
         model_params = _order_model_params(order)
         if model_params:
@@ -224,8 +263,8 @@ class OpenScadModelGenerator:
                     f'use <{template_path.as_posix()}>',
                     f"{call_prefix}keychain(",
                     f"    {_scad_string(order['customer_name'])},",
-                    f"    {_scad_string(order['car_number'])},",
-                    f"    {_scad_string(order['phone'])},",
+                    f"    {_scad_string(print_line_1)},",
+                    f"    {_scad_string(print_line_2)},",
                     f"    {_scad_string_array(element_shapes)},",
                     f"    {width_mm},",
                     f"    {height_mm},",
@@ -260,19 +299,24 @@ class OpenScadModelGenerator:
 
         lines = ["// Reference only. The batch STL is merged directly to avoid CGAL boolean failures."]
         triangles: list[tuple[tuple[float, float, float], list[tuple[float, float, float]]]] = []
+        bed_width, bed_height = self.settings.queue.bed_size_mm
         for item in layout_items:
             order = item["order"]
             stl_path = Path(order["stl_path"]).resolve()
-            x_mm = float(item["x_mm"])
-            y_mm = float(item["y_mm"])
+            physical_x_mm = float(item["x_mm"])
+            physical_y_mm = float(item["y_mm"])
             if not stl_path.exists():
                 return AdapterResult(False, f"Order STL not found: {stl_path}")
-            lines.append(f"translate([{x_mm}, {y_mm}, 0]) import({_scad_string(stl_path.as_posix())});")
             try:
-                for normal, vertices in _read_stl_triangles(stl_path):
-                    translated = [(x + x_mm, y + y_mm, z) for x, y, z in vertices]
+                source_triangles = _read_stl_triangles(stl_path)
+                bounds = stl_bounds(stl_path)
+                x_offset = physical_x_mm - bounds["min_x_mm"] - bed_width / 2
+                y_offset = physical_y_mm - bounds["min_y_mm"] - bed_height / 2
+                lines.append(f"translate([{x_offset}, {y_offset}, 0]) import({_scad_string(stl_path.as_posix())});")
+                for normal, vertices in source_triangles:
+                    translated = [(x + x_offset, y + y_offset, z) for x, y, z in vertices]
                     triangles.append((normal, translated))
-            except (OSError, struct.error) as exc:
+            except (OSError, ValueError, struct.error) as exc:
                 return AdapterResult(False, f"STL merge failed for {stl_path}: {exc}")
         lines.append("")
         plate_scad_path.write_text("\n".join(lines), encoding="utf-8")

@@ -36,6 +36,7 @@ def test_cashier_lists_active_orders_and_uses_paid_at(tmp_path):
     by_id = {order["id"]: order for order in orders}
     assert set(by_id) == {unpaid_id, paid_id}
     assert by_id[unpaid_id]["paid_at"] is None
+    assert by_id[unpaid_id]["price"] == 15
     assert by_id[paid_id]["status"] == "printed"
     assert by_id[paid_id]["paid_at"] is not None
 

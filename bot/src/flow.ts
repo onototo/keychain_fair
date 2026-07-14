@@ -19,8 +19,25 @@ export function defaultSizeId(design: Design): string {
   return design.default_size_id || design.sizes[0]?.id || "";
 }
 
+export function selectedSize(design: Design, sizeId?: string) {
+  return design.sizes.find((size) => size.id === sizeId) || design.sizes.find((size) => size.id === defaultSizeId(design)) || design.sizes[0];
+}
+
 export function defaultElementIds(design: Design): string[] {
-  return [...(design.default_elements || [])];
+  return [];
+}
+
+export function isCustomTextDesign(design: Design): boolean {
+  return design.print_mode === "custom_text";
+}
+
+export function customTextLimit(design: Design, sizeId?: string): number {
+  const size = selectedSize(design, sizeId);
+  return size?.custom_text_limits?.max_total_chars || 48;
+}
+
+export function cleanCustomText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
 }
 
 export function contentElements(design: Design) {
@@ -58,8 +75,7 @@ export function setLoopSide(design: Design, data: DraftData, loopId: string): Dr
 }
 
 export function requiresCarNumber(design: Design, data: DraftData): boolean {
-  if (design.layout !== "stacked_plate") return true;
-  return data.elements.includes("car");
+  return !isCustomTextDesign(design);
 }
 
 export function buildOrderPayload(data: DraftData, draftId: string, user: TelegramUserMeta): OrderPayload {
@@ -72,7 +88,9 @@ export function buildOrderPayload(data: DraftData, draftId: string, user: Telegr
     phone: data.phone,
     design_id: data.designId,
     size_id: data.sizeId,
-    elements: data.elements,
+    elements: [],
+    print_line_1: data.printLine1 || "",
+    print_line_2: "",
     idempotency_key: `tg:${user.chatId}:${draftId}`,
     source: "telegram",
     telegram_chat_id: user.chatId,
@@ -83,16 +101,15 @@ export function buildOrderPayload(data: DraftData, draftId: string, user: Telegr
 
 export function orderSummary(design: Design, data: DraftData): string {
   const size = design.sizes.find((item) => item.id === data.sizeId);
-  const labels = new Map(design.elements.map((element) => [element.id, element.label]));
-  const selected = data.elements.map((elementId) => labels.get(elementId) || elementId).join(", ") || "без доп. элементов";
+  const printText = data.printLine1 || "";
   const price = size?.price ? `\nЦена: ${size.price} BYN` : "";
   const car = data.carNumber ? `\nАвто: ${data.carNumber}` : "";
+  const custom = printText ? `\nПечать: ${printText}` : "";
   return [
     "Проверьте заказ:",
     `Дизайн: ${design.name}`,
     `Размер: ${size?.label || data.sizeId}`,
-    `Элементы: ${selected}`,
     `Имя: ${data.customerName || ""}`,
-    `Телефон: ${data.phone || ""}${car}${price}`,
+    `Телефон: ${data.phone || ""}${car}${custom}${price}`,
   ].join("\n");
 }

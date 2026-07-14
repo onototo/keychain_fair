@@ -3,9 +3,8 @@ import { STLLoader } from "/static/vendor/STLLoader.js";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
 
 const TEXT_BLOCKS = [
-  ["car", "Номер"],
-  ["phone", "Телефон"],
-  ["name", "Имя"],
+  ["car", "Строка 1"],
+  ["phone", "Строка 2"],
 ];
 
 const login = document.querySelector("#editorLogin");
@@ -354,15 +353,17 @@ function selectDesign(designId) {
 function previewElements() {
   const design = getActiveDesign();
   if (!design) return [];
-  if (design.layout === "stacked_plate") return ["name", "car", "phone", "loop_left"];
+  if (design.print_mode === "by_number_single") return ["car"];
   return [];
 }
 
 function sampleText() {
   return {
     customer_name: sampleInputs.customer_name.value || "Nikita",
-    car_number: sampleInputs.car_number.value || "A123BC77",
+    car_number: sampleInputs.car_number.value || "1234AB7",
     phone: sampleInputs.phone.value || "375291234567",
+    print_line_1: sampleInputs.car_number.value || "1234AB7",
+    print_line_2: sampleInputs.phone.value || "",
   };
 }
 

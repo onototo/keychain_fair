@@ -95,6 +95,61 @@ def test_print_batch_slices_and_uploads_only_after_operator_confirmation(tmp_pat
     assert blocked_delete.status_code == 400
 
 
+def test_done_printer_status_completes_printing_batch_and_allows_delete(tmp_path):
+    settings = make_settings(tmp_path, slicer_enabled=True, octoprint_enabled=True)
+    printer = ready_printer(settings)
+    app = create_test_app(
+        settings,
+        slicer=FakeSlicer(settings),
+        printer=printer,
+        notifier=NullNotifier(),
+    )
+
+    with TestClient(app) as client:
+        order_id = create_paid_order(client, "completed-print-order")
+        prepared = client.post("/api/admin/print-queue/prepare", headers=ADMIN_HEADERS).json()
+        batch_id = prepared["batching"]["batches"][0]["id"]
+        started = client.post(f"/api/admin/batches/{batch_id}/print", headers=ADMIN_HEADERS)
+
+        printer.job_result = AdapterResult(
+            True,
+            "fake completed job",
+            extra={"state": "Operational", "progress": {"completion": 100, "printTime": 900, "printTimeLeft": 0}},
+        )
+        printer.printer_result = AdapterResult(
+            True,
+            "fake printer ready",
+            extra={
+                "state": {
+                    "text": "Operational",
+                    "flags": {
+                        "operational": True,
+                        "ready": True,
+                        "printing": False,
+                        "closedOrError": False,
+                        "error": False,
+                    },
+                }
+            },
+        )
+
+        status = client.get("/api/admin/printer/status", headers=ADMIN_HEADERS)
+        order = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"][0]
+        batch = client.get("/api/admin/batches", headers=ADMIN_HEADERS).json()["batches"][0]
+        deleted = client.delete(f"/api/admin/orders/{order_id}", headers=ADMIN_HEADERS)
+
+    assert started.status_code == 200
+    assert status.status_code == 200
+    assert status.json()["state"] == "done_printing"
+    assert status.json()["completed_prints"]["completed"] is True
+    assert status.json()["completed_prints"]["orders_updated"] == 1
+    assert order["status"] == "printed"
+    assert batch["id"] == batch_id
+    assert batch["status"] == "printed"
+    assert deleted.status_code == 200
+    assert deleted.json()["order"]["archived_at"] is not None
+
+
 def test_admin_bed_controls_send_targets(tmp_path):
     settings = make_settings(tmp_path, octoprint_enabled=True)
     printer = ready_printer(settings)

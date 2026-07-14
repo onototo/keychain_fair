@@ -41,10 +41,13 @@ orders = Table(
     Column("customer_name", String, nullable=False),
     Column("car_number", String, nullable=False),
     Column("phone", String, nullable=False),
+    Column("print_line_1", String, nullable=False, default=""),
+    Column("print_line_2", String, nullable=False, default=""),
     Column("design_id", String, nullable=False),
     Column("design_name", String, nullable=False),
     Column("size_id", String, nullable=False),
     Column("size_label", String, nullable=False),
+    Column("price", Float),
     Column("width_mm", Float, nullable=False),
     Column("height_mm", Float, nullable=False),
     Column("thickness_mm", Float, nullable=False),
@@ -53,6 +56,7 @@ orders = Table(
     Column("model_params_json", Text),
     Column("status", String, nullable=False),
     Column("source", String),
+    Column("client_id", String),
     Column("telegram_chat_id", String),
     Column("telegram_user_id", String),
     Column("telegram_username", String),
@@ -66,6 +70,16 @@ orders = Table(
     Column("batch_id", String),
     Column("gcode_path", Text),
     Column("error_message", Text),
+)
+
+order_user_mutes = Table(
+    "order_user_mutes",
+    metadata,
+    Column("identity_kind", String, primary_key=True),
+    Column("identity_value", String, primary_key=True),
+    Column("muted_until", String, nullable=False),
+    Column("reason", Text),
+    Column("updated_at", String, nullable=False),
 )
 
 print_batches = Table(
@@ -184,6 +198,15 @@ def _clean_optional_text(value: Any) -> str | None:
     return cleaned or None
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class Database:
     def __init__(self, database_path: Path, database_url: str | None = None):
         self.database_path = database_path
@@ -229,6 +252,8 @@ class Database:
                 {"status": statuses.READY_FOR_PICKUP},
             )
             conn.execute(text("UPDATE orders SET source = 'web' WHERE source IS NULL OR source = ''"))
+            conn.execute(text("UPDATE orders SET print_line_1 = '' WHERE print_line_1 IS NULL"))
+            conn.execute(text("UPDATE orders SET print_line_2 = '' WHERE print_line_2 IS NULL"))
 
     def _migrate_existing_schema(self) -> None:
         columns = {column["name"] for column in inspect(self.engine).get_columns("orders")}
@@ -238,9 +263,13 @@ class Database:
             "model_params_json": "TEXT",
             "ready_for_pickup_at": "TEXT",
             "source": "TEXT",
+            "client_id": "TEXT",
             "telegram_chat_id": "TEXT",
             "telegram_user_id": "TEXT",
             "telegram_username": "TEXT",
+            "print_line_1": "TEXT",
+            "print_line_2": "TEXT",
+            "price": "FLOAT",
         }
         missing = [(name, ddl_type) for name, ddl_type in additions.items() if name not in columns]
         if not missing:
@@ -276,10 +305,13 @@ class Database:
             "customer_name": payload["customer_name"],
             "car_number": payload["car_number"],
             "phone": payload["phone"],
+            "print_line_1": payload.get("print_line_1", ""),
+            "print_line_2": payload.get("print_line_2", ""),
             "design_id": design["id"],
             "design_name": design["name"],
             "size_id": size["id"],
             "size_label": size["label"],
+            "price": _optional_float(size.get("price")),
             "width_mm": width_mm,
             "height_mm": height_mm,
             "thickness_mm": float(model_params.get("thickness_mm", size["thickness_mm"])) if model_params else float(size["thickness_mm"]),
@@ -288,6 +320,7 @@ class Database:
             "model_params_json": model_params_json,
             "status": statuses.UNPAID,
             "source": _clean_optional_text(payload.get("source")) or "web",
+            "client_id": _clean_optional_text(payload.get("client_id")),
             "telegram_chat_id": _clean_optional_text(payload.get("telegram_chat_id")),
             "telegram_user_id": _clean_optional_text(payload.get("telegram_user_id")),
             "telegram_username": _clean_optional_text(payload.get("telegram_username")),
@@ -317,6 +350,69 @@ class Database:
         with self.engine.connect() as conn:
             row = conn.execute(select(orders).where(orders.c.idempotency_key == idempotency_key)).mappings().first()
         return self._order_from_row(row) if row is not None else None
+
+    def count_unpaid_orders_for_identity(self, identity_kind: str, identity_value: str) -> int:
+        column = getattr(orders.c, identity_kind, None)
+        if column is None:
+            return 0
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(orders.c.id).where(
+                    and_(
+                        column == identity_value,
+                        orders.c.archived_at.is_(None),
+                        orders.c.paid_at.is_(None),
+                    )
+                )
+            ).scalars().all()
+        return len(rows)
+
+    def get_active_mute(self, identity_kind: str, identity_value: str) -> dict[str, Any] | None:
+        now = now_iso()
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(order_user_mutes).where(
+                    and_(
+                        order_user_mutes.c.identity_kind == identity_kind,
+                        order_user_mutes.c.identity_value == identity_value,
+                        order_user_mutes.c.muted_until > now,
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row is not None else None
+
+    def set_user_mute(self, identity_kind: str, identity_value: str, muted_until: str, reason: str) -> dict[str, Any]:
+        updated = now_iso()
+        values = {
+            "identity_kind": identity_kind,
+            "identity_value": identity_value,
+            "muted_until": muted_until,
+            "reason": reason,
+            "updated_at": updated,
+        }
+        with self.engine.begin() as conn:
+            existing = conn.execute(
+                select(order_user_mutes.c.identity_kind).where(
+                    and_(
+                        order_user_mutes.c.identity_kind == identity_kind,
+                        order_user_mutes.c.identity_value == identity_value,
+                    )
+                )
+            ).first()
+            if existing:
+                conn.execute(
+                    order_user_mutes.update()
+                    .where(
+                        and_(
+                            order_user_mutes.c.identity_kind == identity_kind,
+                            order_user_mutes.c.identity_value == identity_value,
+                        )
+                    )
+                    .values(**values)
+                )
+            else:
+                conn.execute(order_user_mutes.insert().values(**values))
+        return values
 
     def list_orders(self, status: str | None = None, include_archived: bool = False) -> list[dict[str, Any]]:
         conditions = []
@@ -429,6 +525,8 @@ class Database:
         batch = self.get_batch(str(batch_id))
         if batch["status"] == statuses.PRINTING:
             raise ValueError("Printing batches can not be changed")
+        if batch["status"] != statuses.QUEUED:
+            return
 
         updated = now_iso()
         with self.engine.begin() as conn:
@@ -464,6 +562,13 @@ class Database:
             if result.rowcount == 0:
                 raise KeyError(order_id)
         return self.get_order(order_id)
+
+    def has_printing_batches(self) -> bool:
+        with self.engine.connect() as conn:
+            batch_id = conn.execute(
+                select(print_batches.c.id).where(print_batches.c.status == statuses.PRINTING).limit(1)
+            ).scalar()
+        return batch_id is not None
 
     def set_order_generated(self, order_id: str, stl_path: Path, wrapper_scad_path: Path) -> dict[str, Any]:
         updated = now_iso()
@@ -622,6 +727,42 @@ class Database:
                 .where(and_(orders.c.archived_at.is_(None), orders.c.status == statuses.PRINTING))
                 .values(status=statuses.QUEUED, updated_at=updated, error_message=None)
             )
+
+        return {
+            "batches": [self.get_batch(batch_id) for batch_id in batch_ids],
+            "orders_updated": len(order_ids),
+        }
+
+    def complete_printing_batches(self) -> dict[str, Any]:
+        updated = now_iso()
+        with self.engine.begin() as conn:
+            batch_ids = list(
+                conn.execute(
+                    select(print_batches.c.id)
+                    .where(print_batches.c.status == statuses.PRINTING)
+                    .order_by(print_batches.c.created_at.asc())
+                ).scalars()
+            )
+            order_ids = list(
+                conn.execute(
+                    select(orders.c.id)
+                    .where(and_(orders.c.archived_at.is_(None), orders.c.status == statuses.PRINTING))
+                    .order_by(orders.c.created_at.asc())
+                ).scalars()
+            )
+
+            if batch_ids:
+                conn.execute(
+                    print_batches.update()
+                    .where(print_batches.c.id.in_(batch_ids))
+                    .values(status=statuses.PRINTED, updated_at=updated, error_message=None)
+                )
+            if order_ids:
+                conn.execute(
+                    orders.update()
+                    .where(orders.c.id.in_(order_ids))
+                    .values(status=statuses.PRINTED, updated_at=updated, error_message=None)
+                )
 
         return {
             "batches": [self.get_batch(batch_id) for batch_id in batch_ids],

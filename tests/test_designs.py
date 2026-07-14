@@ -6,25 +6,48 @@ def test_design_catalog_loads_templates():
     catalog = DesignCatalog(PROJECT_ROOT / "designs")
     designs = catalog.load_designs()
 
-    assert {item["id"] for item in designs} >= {"classic_plate", "rounded_tag"}
+    assert [item["id"] for item in designs] == ["stacked_plate_classic", "square_plate", "classic_plate", "rounded_tag"]
+    assert [item["name"] for item in designs] == [
+        "Прямоугольный номер",
+        "Квадратный номер",
+        "Кастомный прямоугольный",
+        "Кастомный овальный",
+    ]
     assert all(item["template_available"] for item in designs)
     assert all(item["preview_image"].startswith("/static/design-previews/") for item in designs)
     assert all((PROJECT_ROOT / item["preview_image"].lstrip("/")).exists() for item in designs)
+    assert [item["preview_image"].split("/")[-1] for item in designs] == [
+        "01_rectangular_number.png",
+        "02_square_number.png",
+        "03_custom_rectangular.png",
+        "04_custom_oval.png",
+    ]
 
 
-def test_selection_filters_elements():
+def test_selection_rejects_removed_elements():
     catalog = DesignCatalog(PROJECT_ROOT / "designs")
-    selection = catalog.validate_selection("classic_plate", "standard", ["heart", "heart", "star"])
+    try:
+        catalog.validate_selection("classic_plate", "standard", ["heart"])
+    except Exception as exc:
+        assert "Unsupported elements" in str(exc)
+    else:
+        raise AssertionError("heart should not be accepted")
 
-    assert selection.design["id"] == "classic_plate"
-    assert selection.size["id"] == "standard"
-    assert [item["id"] for item in selection.elements] == ["heart", "heart", "star"]
 
-
-def test_stacked_plate_uses_default_print_block():
+def test_models_have_no_default_elements():
     catalog = DesignCatalog(PROJECT_ROOT / "designs")
-    selection = catalog.validate_selection("stacked_plate_classic", "standard", [])
+    designs = catalog.load_designs()
 
-    assert selection.design["layout"] == "stacked_plate"
-    assert selection.design["default_size_id"] == "standard"
-    assert [item["id"] for item in selection.elements] == ["car", "loop_left"]
+    assert all(item["default_elements"] == [] for item in designs)
+    assert all(item["elements"] == [] for item in designs)
+
+
+def test_custom_designs_expose_text_limits():
+    catalog = DesignCatalog(PROJECT_ROOT / "designs")
+    designs = {item["id"]: item for item in catalog.load_public_designs()}
+
+    rectangular = [size["custom_text_limits"]["max_total_chars"] for size in designs["classic_plate"]["sizes"]]
+    oval = [size["custom_text_limits"]["max_total_chars"] for size in designs["rounded_tag"]["sizes"]]
+
+    assert rectangular == [22, 26, 29]
+    assert oval == [20, 27, 29]

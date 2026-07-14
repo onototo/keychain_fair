@@ -11,11 +11,14 @@ from .validation import normalize_car_number, normalize_customer_name, normalize
 class OrderCreate(BaseModel):
     customer_name: str = Field(min_length=2, max_length=30)
     car_number: str = Field(default="", max_length=16)
-    phone: str = Field(min_length=11, max_length=12)
+    phone: str = Field(min_length=11, max_length=13)
     design_id: str
     size_id: str
     elements: list[str] = Field(default_factory=list, max_length=6)
+    print_line_1: str = Field(default="", max_length=48)
+    print_line_2: str = Field(default="", max_length=48)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=96)
+    client_id: str | None = Field(default=None, min_length=8, max_length=96)
 
     @field_validator("customer_name")
     @classmethod
@@ -33,6 +36,11 @@ class OrderCreate(BaseModel):
     @classmethod
     def validate_phone(cls, value: str) -> str:
         return normalize_phone(value)
+
+    @field_validator("print_line_1", "print_line_2")
+    @classmethod
+    def clean_print_line(cls, value: str) -> str:
+        return " ".join(value.strip().split())
 
     @field_validator("elements")
     @classmethod
@@ -54,6 +62,19 @@ class OrderCreate(BaseModel):
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:")
         if any(char not in allowed for char in cleaned):
             raise ValueError("idempotency_key may only contain letters, numbers, '-', '_' and ':'")
+        return cleaned
+
+    @field_validator("client_id")
+    @classmethod
+    def validate_client_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:")
+        if any(char not in allowed for char in cleaned):
+            raise ValueError("client_id may only contain letters, numbers, '-', '_' and ':'")
         return cleaned
 
 

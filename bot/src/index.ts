@@ -4,12 +4,15 @@ import { KeychainApi } from "./api.js";
 import { loadConfig } from "./config.js";
 import {
   buildOrderPayload,
+  cleanCustomText,
   contentElementIds,
   contentElements,
   createDraftSession,
+  customTextLimit,
   defaultElementIds,
   defaultSizeId,
   findDesign,
+  isCustomTextDesign,
   loopElements,
   orderSummary,
   requiresCarNumber,
@@ -41,6 +44,19 @@ function telegramMeta(ctx: Context) {
 
 function mainKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("Новый заказ", "start:new");
+}
+
+function cleanPhone(value: string): string {
+  const cleaned = value.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  return cleaned.startsWith("+") ? `+${cleaned.slice(1).replace(/\D/g, "")}` : cleaned.replace(/\D/g, "");
+}
+
+function cleanCarNumber(value: string): string {
+  const compact = value.replace(/[\s-]+/g, "").toUpperCase();
+  if (/^\d{4}[A-Z]{2}[1-7]$/.test(compact)) {
+    return `${compact.slice(0, 4)} ${compact.slice(4, 6)}-${compact.slice(6)}`;
+  }
+  return compact;
 }
 
 async function saveAndReply(ctx: Context, session: DraftSession, text: string, keyboard?: InlineKeyboard): Promise<void> {
@@ -114,6 +130,12 @@ async function showLoopSide(ctx: Context, session: DraftSession, design: Design)
   await saveAndReply(ctx, session, "Выберите сторону ушка для кольца.", keyboard);
 }
 
+async function askPrintText(ctx: Context, session: DraftSession, design: Design): Promise<void> {
+  session.step = "print_text";
+  const limit = customTextLimit(design, session.data.sizeId);
+  await saveAndReply(ctx, session, `Введите текст для брелока. Максимальная длина текста: ${limit} символов.`);
+}
+
 async function askName(ctx: Context, session: DraftSession): Promise<void> {
   session.step = "name";
   await saveAndReply(ctx, session, "Введите имя для заказа.");
@@ -121,12 +143,12 @@ async function askName(ctx: Context, session: DraftSession): Promise<void> {
 
 async function askPhone(ctx: Context, session: DraftSession): Promise<void> {
   session.step = "phone";
-  await saveAndReply(ctx, session, "Введите телефон цифрами, например 375291234567.");
+  await saveAndReply(ctx, session, "Введите телефон, например +375291234567 или 375291234567.");
 }
 
 async function askCar(ctx: Context, session: DraftSession): Promise<void> {
   session.step = "car";
-  await saveAndReply(ctx, session, "Введите номер авто, например A123BC77 или 1234AB7.");
+  await saveAndReply(ctx, session, "Введите номер авто РБ латиницей, например 1234 AB-7.");
 }
 
 async function showConfirmation(ctx: Context, session: DraftSession, design: Design): Promise<void> {
@@ -222,7 +244,12 @@ bot.callbackQuery(/^size:(.+)$/, async (ctx) => {
   const current = await currentSessionAndDesign(ctx);
   if (!current) return;
   current.session.data.sizeId = ctx.match[1];
-  await showElements(ctx, current.session, current.design);
+  current.session.data.elements = [];
+  if (isCustomTextDesign(current.design)) {
+    await askPrintText(ctx, current.session, current.design);
+    return;
+  }
+  await askName(ctx, current.session);
 });
 
 bot.callbackQuery(/^el:(.+)$/, async (ctx) => {
@@ -279,6 +306,22 @@ bot.on("message:text", async (ctx) => {
   const current = await currentSessionAndDesign(ctx);
   if (!current) return;
 
+  if (session.step === "print_text") {
+    const cleaned = cleanCustomText(text);
+    const limit = customTextLimit(current.design, session.data.sizeId);
+    if (!cleaned) {
+      await ctx.reply("Введите текст для печати.");
+      return;
+    }
+    if (cleaned.length > limit) {
+      await ctx.reply(`Слишком длинный текст. Максимальная длина: ${limit} символов.`);
+      return;
+    }
+    session.data.printLine1 = cleaned;
+    await askName(ctx, session);
+    return;
+  }
+
   if (session.step === "name") {
     session.data.customerName = text;
     await askPhone(ctx, session);
@@ -286,7 +329,7 @@ bot.on("message:text", async (ctx) => {
   }
 
   if (session.step === "phone") {
-    session.data.phone = text.replace(/\D/g, "");
+    session.data.phone = cleanPhone(text);
     if (requiresCarNumber(current.design, session.data)) {
       await askCar(ctx, session);
     } else {
@@ -296,7 +339,7 @@ bot.on("message:text", async (ctx) => {
   }
 
   if (session.step === "car") {
-    session.data.carNumber = text.replace(/[\s-]+/g, "").toUpperCase();
+    session.data.carNumber = cleanCarNumber(text);
     await showConfirmation(ctx, session, current.design);
     return;
   }

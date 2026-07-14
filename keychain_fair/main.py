@@ -27,7 +27,7 @@ from .editor import (
 )
 from .models import InternalOrderCreate, OrderCreate, PaymentStatusUpdate, StatusUpdate
 from .network import local_ipv4_addresses, qr_data_uri, wifi_qr_payload
-from .services import OrderService
+from .services import OrderBlockedError, OrderService
 from .statistics import XLSX_MEDIA_TYPE, build_statistics_workbook
 from .worker import worker_loop
 
@@ -43,12 +43,29 @@ def _public_order(order: dict[str, Any]) -> dict[str, Any]:
         "gcode_path",
         "batch_id",
         "model_params",
+        "client_id",
         "telegram_chat_id",
         "telegram_user_id",
         "telegram_username",
     ]:
         public.pop(key, None)
     return public
+
+
+def _order_with_catalog_price(order: dict[str, Any], catalog: DesignCatalog) -> dict[str, Any]:
+    if order.get("price") is not None:
+        return order
+
+    enriched = dict(order)
+    try:
+        design = catalog.get_design(str(order.get("design_id") or ""))
+    except DesignCatalogError:
+        return enriched
+
+    size = next((item for item in design.get("sizes", []) if item.get("id") == order.get("size_id")), None)
+    if size is not None and size.get("price") is not None:
+        enriched["price"] = size["price"]
+    return enriched
 
 
 PRINTER_STATUS_LABELS = {
@@ -383,6 +400,13 @@ def create_app(
     def create_order(payload: OrderCreate) -> dict[str, Any]:
         try:
             order = service.create_order(payload)
+        except OrderBlockedError as exc:
+            detail: dict[str, Any] = {"message": exc.message}
+            headers = None
+            if exc.retry_after_seconds is not None:
+                detail["retry_after_seconds"] = exc.retry_after_seconds
+                headers = {"Retry-After": str(exc.retry_after_seconds)}
+            raise HTTPException(status_code=exc.status_code, detail=detail, headers=headers) from exc
         except DesignCatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"order": _public_order(order)}
@@ -391,6 +415,13 @@ def create_app(
     def create_internal_order(payload: InternalOrderCreate) -> dict[str, Any]:
         try:
             order = service.create_order(payload)
+        except OrderBlockedError as exc:
+            detail: dict[str, Any] = {"message": exc.message}
+            headers = None
+            if exc.retry_after_seconds is not None:
+                detail["retry_after_seconds"] = exc.retry_after_seconds
+                headers = {"Retry-After": str(exc.retry_after_seconds)}
+            raise HTTPException(status_code=exc.status_code, detail=detail, headers=headers) from exc
         except DesignCatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"order": _public_order(order)}
@@ -418,7 +449,7 @@ def create_app(
 
     @app.get("/api/cashier/orders", dependencies=[Depends(require_cashier)])
     def cashier_orders() -> dict[str, Any]:
-        return {"orders": database.list_orders()}
+        return {"orders": [_order_with_catalog_price(order, catalog) for order in database.list_orders()]}
 
     @app.post("/api/cashier/orders/{order_id}/payment", dependencies=[Depends(require_cashier)])
     def cashier_set_payment(order_id: str, payload: PaymentStatusUpdate) -> dict[str, Any]:
@@ -579,7 +610,9 @@ def create_app(
 
     @app.get("/api/admin/printer/status", dependencies=[Depends(require_admin)])
     def admin_printer_status() -> dict[str, Any]:
-        return _printer_status_payload(print_controller)
+        payload = _printer_status_payload(print_controller)
+        payload["completed_prints"] = service.complete_printing_batches_if_done(payload)
+        return payload
 
     @app.get("/api/system/info")
     def system_info() -> dict[str, Any]:

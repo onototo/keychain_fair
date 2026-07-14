@@ -1,0 +1,159 @@
+{
+  "id": "square_plate",
+  "sort_order": 2,
+  "name": "Квадратный номер",
+  "description": "Квадратный брелок с номером авто РБ в две строки.",
+  "template": "square_plate.scad",
+  "print_mode": "by_number_square",
+  "accent": "#8fd14f",
+  "preview_image": "02_square_number.png",
+  "default_elements": [],
+  "default_size_id": "standard",
+  "sizes": [
+    {
+      "id": "compact",
+      "label": "Компактный",
+      "width_mm": 30,
+      "height_mm": 30,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 8,
+      "price": 12,
+      "editor_params": {
+        "base_width_mm": 30,
+        "base_height_mm": 30,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 5.8,
+          "y_mm": 24.2,
+          "radius_mm": 2.15
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 18,
+            "box_height_mm": 8.4,
+            "font_size_mm": 8,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 20,
+            "box_height_mm": 7.2,
+            "font_size_mm": 5.8,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    },
+    {
+      "id": "standard",
+      "label": "Стандартный",
+      "width_mm": 36,
+      "height_mm": 36,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 9.5,
+      "price": 15,
+      "editor_params": {
+        "base_width_mm": 36,
+        "base_height_mm": 36,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 6.2,
+          "y_mm": 29.8,
+          "radius_mm": 2.25
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5.5,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 22,
+            "box_height_mm": 10,
+            "font_size_mm": 9.5,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 24,
+            "box_height_mm": 8.6,
+            "font_size_mm": 6.8,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    },
+    {
+      "id": "large",
+      "label": "Большой",
+      "width_mm": 42,
+      "height_mm": 42,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 11,
+      "price": 18,
+      "editor_params": {
+        "base_width_mm": 42,
+        "base_height_mm": 42,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 6.8,
+          "y_mm": 35.2,
+          "radius_mm": 2.35
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 6.2,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 26,
+            "box_height_mm": 11.6,
+            "font_size_mm": 11,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 28,
+            "box_height_mm": 10,
+            "font_size_mm": 7.8,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    }
+  ],
+  "elements": []
+}

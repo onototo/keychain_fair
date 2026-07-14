@@ -1,0 +1,161 @@
+{
+  "id": "rounded_tag",
+  "sort_order": 4,
+  "name": "Кастомный овальный",
+  "description": "Овальный брелок для произвольного текста в одну или две строки.",
+  "template": "rounded_tag.scad",
+  "print_mode": "custom_text",
+  "accent": "#35a7a0",
+  "preview_image": "04_custom_oval.png",
+  "default_elements": [],
+  "default_size_id": "standard",
+  "sizes": [
+    {
+      "id": "compact",
+      "label": "Компактный",
+      "width_mm": 50,
+      "height_mm": 28,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 5.5,
+      "model_scale": 1,
+      "legacy_model_scale": 1,
+      "price": 12,
+      "editor_params": {
+        "base_width_mm": 50,
+        "base_height_mm": 28,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 4,
+          "y_mm": 14,
+          "radius_mm": 2.35
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 3.96,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 1.6,
+            "y_offset_mm": 1.7,
+            "box_width_mm": 28,
+            "box_height_mm": 9.52,
+            "font_size_mm": 5.5,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 3,
+            "y_offset_mm": 0,
+            "box_width_mm": 32,
+            "box_height_mm": 6.3,
+            "font_size_mm": 3.5,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    },
+    {
+      "id": "standard",
+      "label": "Стандартный",
+      "width_mm": 62,
+      "height_mm": 34,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 6.5,
+      "price": 15,
+      "editor_params": {
+        "base_width_mm": 62,
+        "base_height_mm": 34,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 7,
+          "y_mm": 17,
+          "radius_mm": 2.35
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 4.68,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 40,
+            "box_height_mm": 11.56,
+            "font_size_mm": 6.5,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 44,
+            "box_height_mm": 7.48,
+            "font_size_mm": 3.64,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    },
+    {
+      "id": "large",
+      "label": "Большой",
+      "width_mm": 74,
+      "height_mm": 40,
+      "thickness_mm": 2.1,
+      "relief_height_mm": 0.8,
+      "font_size_mm": 7.5,
+      "price": 18,
+      "editor_params": {
+        "base_width_mm": 74,
+        "base_height_mm": 40,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.8,
+        "section_overlap_mm": 0,
+        "hole": {
+          "x_mm": 7,
+          "y_mm": 20,
+          "radius_mm": 2.35
+        },
+        "text_blocks": {
+          "name": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 0,
+            "box_height_mm": 0,
+            "font_size_mm": 5.4,
+            "relief_height_mm": 0.8
+          },
+          "car": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 50,
+            "box_height_mm": 13.6,
+            "font_size_mm": 7.5,
+            "relief_height_mm": 0.8
+          },
+          "phone": {
+            "x_offset_mm": 0,
+            "y_offset_mm": 0,
+            "box_width_mm": 54,
+            "box_height_mm": 8.8,
+            "font_size_mm": 4.2,
+            "relief_height_mm": 0.8
+          }
+        }
+      }
+    }
+  ],
+  "elements": []
+}

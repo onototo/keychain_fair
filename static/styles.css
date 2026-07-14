@@ -264,6 +264,17 @@ label {
   border-radius: 999px;
 }
 
+.keychain-preview.square {
+  width: min(78vw, 320px);
+  aspect-ratio: 1 / 1;
+  padding: 34px 28px 24px;
+  border-radius: 16px;
+}
+
+.keychain-preview.square .keychain-hole {
+  top: 18px;
+}
+
 .keychain-hole {
   position: absolute;
   left: 18px;
@@ -1184,6 +1195,13 @@ label {
 
 .cashier-payment strong {
   font-size: 21px;
+}
+
+.cashier-price {
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 950;
+  line-height: 1;
 }
 
 .cashier-dialog {

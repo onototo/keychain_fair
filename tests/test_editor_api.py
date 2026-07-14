@@ -24,7 +24,7 @@ def test_model_editor_designs_returns_editable_params(tmp_path):
 
     assert response.status_code == 200
     designs = response.json()["designs"]
-    assert {design["id"] for design in designs} == {"stacked_plate_classic", "classic_plate", "rounded_tag"}
+    assert [design["id"] for design in designs] == ["stacked_plate_classic", "square_plate", "classic_plate", "rounded_tag"]
     for design in designs:
         for size in design["sizes"]:
             params = size["editor_params"]
@@ -137,7 +137,7 @@ def test_model_editor_save_preset_updates_size_and_creates_backup(tmp_path):
         )
 
     assert response.status_code == 200
-    source = settings.designs_dir / "classic_plate.json"
+    source = settings.designs_dir / "03_custom_rectangular.json"
     saved = json.loads(source.read_text(encoding="utf-8"))
     saved_size = next(item for item in saved["sizes"] if item["id"] == size["id"])
     assert saved_size["width_mm"] == 57.5
@@ -146,8 +146,43 @@ def test_model_editor_save_preset_updates_size_and_creates_backup(tmp_path):
     assert saved_size["editor_params"]["base_width_mm"] == 57.5
     assert saved_size["editor_params"]["thickness_mm"] == 4.9
     assert response.json()["editor_params"]["thickness_mm"] == 4.9
-    backups = list((settings.base_dir / "data" / "design_backups").glob("*_classic_plate.json"))
+    backups = list((settings.base_dir / "data" / "design_backups").glob("*_03_custom_rectangular.json"))
     assert len(backups) == 1
+
+
+def test_model_editor_saved_preset_survives_app_restart(tmp_path):
+    settings = make_temp_design_settings(tmp_path)
+
+    app = create_test_app(settings)
+    with TestClient(app) as client:
+        designs = client.get("/api/admin/model-editor/designs", headers=ADMIN_HEADERS).json()["designs"]
+        design = next(item for item in designs if item["id"] == "classic_plate")
+        size = next(item for item in design["sizes"] if item["id"] == "standard")
+        params = size["editor_params"]
+        params["base_width_mm"] = 68.4
+        params["base_height_mm"] = 31.2
+        params["hole"]["x_mm"] = 8.2
+        params["text_blocks"]["car"]["font_size_mm"] = 8.4
+        response = client.post(
+            "/api/admin/model-editor/presets",
+            headers=ADMIN_HEADERS,
+            json={"design_id": design["id"], "size_id": size["id"], "editor_params": params},
+        )
+        assert response.status_code == 200
+
+    restarted_app = create_test_app(settings)
+    with TestClient(restarted_app) as client:
+        refreshed = client.get("/api/admin/model-editor/designs", headers=ADMIN_HEADERS).json()["designs"]
+
+    refreshed_design = next(item for item in refreshed if item["id"] == "classic_plate")
+    refreshed_size = next(item for item in refreshed_design["sizes"] if item["id"] == "standard")
+    refreshed_params = refreshed_size["editor_params"]
+    assert refreshed_size["width_mm"] == 68.4
+    assert refreshed_size["height_mm"] == 31.2
+    assert refreshed_params["base_width_mm"] == 68.4
+    assert refreshed_params["base_height_mm"] == 31.2
+    assert refreshed_params["hole"]["x_mm"] == 8.2
+    assert refreshed_params["text_blocks"]["car"]["font_size_mm"] == 8.4
 
 
 def test_model_editor_save_preset_syncs_shared_heights_to_all_design_presets(tmp_path):
@@ -171,7 +206,7 @@ def test_model_editor_save_preset_syncs_shared_heights_to_all_design_presets(tmp
     assert response.status_code == 200
     assert len(response.json()["paths"]["synced_sources"]) == 2
     assert len(response.json()["paths"]["backups"]) == 2
-    for source_name in ["classic_plate.json", "rounded_tag.json"]:
+    for source_name in ["03_custom_rectangular.json", "04_custom_oval.json"]:
         saved = json.loads((settings.designs_dir / source_name).read_text(encoding="utf-8"))
         for size in saved["sizes"]:
             assert size["thickness_mm"] == 4.7

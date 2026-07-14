@@ -182,6 +182,141 @@ def test_internal_order_requires_token_and_stores_telegram_metadata(tmp_path):
     assert order["telegram_username"] == "anna"
 
 
+def test_custom_order_keeps_one_short_print_line(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/orders",
+            json=order_payload(
+                design_id="classic_plate",
+                size_id="standard",
+                print_line_1="PAPA",
+                print_line_2="",
+                idempotency_key="custom-one-line",
+            ),
+        )
+        order = response.json()["order"]
+
+    assert response.status_code == 201
+    assert order["print_line_1"] == "PAPA"
+    assert order["print_line_2"] == ""
+
+
+def test_custom_order_splits_one_long_print_line(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/orders",
+            json=order_payload(
+                design_id="classic_plate",
+                size_id="standard",
+                print_line_1="LONG CUSTOM MESSAGE",
+                print_line_2="",
+                idempotency_key="custom-long-line",
+            ),
+        )
+        order = response.json()["order"]
+
+    assert response.status_code == 201
+    assert order["print_line_1"] == "LONG"
+    assert order["print_line_2"] == "CUSTOM MESSAGE"
+
+
+def test_custom_order_keeps_two_print_lines(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/orders",
+            json=order_payload(
+                design_id="rounded_tag",
+                size_id="standard",
+                print_line_1="1234 AB-7",
+                print_line_2="+375291234567",
+                idempotency_key="custom-two-lines",
+            ),
+        )
+        order = response.json()["order"]
+
+    assert response.status_code == 201
+    assert order["print_line_1"] == "1234 AB-7"
+    assert order["print_line_2"] == "+375291234567"
+
+
+def test_custom_order_rejects_text_over_size_limit(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/orders",
+            json=order_payload(
+                design_id="classic_plate",
+                size_id="standard",
+                print_line_1="X" * 27,
+                idempotency_key="custom-too-long",
+            ),
+        )
+
+    assert response.status_code == 400
+    assert "Maximum length is 26" in response.json()["detail"]
+
+
+def test_web_user_can_have_only_two_unpaid_orders_until_payment(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        first = client.post("/api/orders", json=order_payload(idempotency_key="quota-01", client_id="browser-1"))
+        second = client.post("/api/orders", json=order_payload(idempotency_key="quota-02", client_id="browser-1"))
+        third = client.post("/api/orders", json=order_payload(idempotency_key="quota-03", client_id="browser-1"))
+
+        paid = client.post(
+            f"/api/admin/orders/{first.json()['order']['id']}/status",
+            headers=ADMIN_HEADERS,
+            json={"status": "paid"},
+        )
+        fourth = client.post("/api/orders", json=order_payload(idempotency_key="quota-04", client_id="browser-1"))
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert third.status_code == 429
+    assert "only 2 unpaid orders" in third.json()["detail"]["message"]
+    assert paid.status_code == 200
+    assert fourth.status_code == 201
+
+
+def test_profanity_blocks_order_and_mutes_user(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        blocked = client.post(
+            "/api/orders",
+            json=order_payload(
+                customer_name="\u0410\u043d\u043d\u0430 \u0445\u0443\u0439",
+                idempotency_key="bad-language-1",
+                client_id="browser-bad",
+            ),
+        )
+        muted = client.post(
+            "/api/orders",
+            json=order_payload(idempotency_key="bad-language-2", client_id="browser-bad"),
+        )
+        orders = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"]
+
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["retry_after_seconds"] == 300
+    assert muted.status_code == 429
+    assert muted.json()["detail"]["retry_after_seconds"] > 0
+    assert orders == []
+
+
 def test_unpaid_order_is_not_prepared_or_placed_on_bed(tmp_path):
     settings = make_settings(tmp_path)
     app = queue_app(settings)
