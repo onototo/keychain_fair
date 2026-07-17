@@ -3,6 +3,7 @@ import json
 from fastapi.testclient import TestClient
 
 from keychain_fair.config import PROJECT_ROOT
+from keychain_fair.editor import fit_custom_text_layout, order_with_fitted_custom_text
 from tests.support import ADMIN_HEADERS, FakeGenerator, create_test_app, make_settings, make_temp_design_settings, order_payload
 
 
@@ -26,6 +27,63 @@ def assert_relief_layer_aligned(value):
     assert abs(layer_index - round(layer_index)) < 0.000001
 
 
+def test_custom_text_layout_grows_short_text_to_zone():
+    layout = fit_custom_text_layout("OK", 46, 14.4)
+
+    assert layout["lines"] == ["OK", ""]
+    assert layout["font_size_mm"] > 6
+    assert layout["fits"] is True
+
+
+def test_custom_text_layout_wraps_before_dropping_below_minimum():
+    layout = fit_custom_text_layout("ALPHA BETA GAMMA", 46, 14.4)
+
+    assert layout["lines"] == ["ALPHA BETA", "GAMMA"]
+    assert layout["font_size_mm"] >= 6
+    assert layout["fits"] is True
+
+
+def test_custom_text_layout_reports_when_minimum_font_does_not_fit():
+    layout = fit_custom_text_layout("LONG CUSTOM TEXT", 16, 8)
+
+    assert layout["lines"][1]
+    assert layout["font_size_mm"] < 6
+    assert layout["fits"] is False
+
+
+def test_custom_text_layout_uses_line_spacing_for_wrapped_text():
+    compact = fit_custom_text_layout("ABCDE ABCDE", 46, 14.4, line_spacing=0.8)
+    loose = fit_custom_text_layout("ABCDE ABCDE", 46, 14.4, line_spacing=1.6)
+
+    assert compact["lines"] == loose["lines"]
+    assert compact["font_size_mm"] > loose["font_size_mm"]
+    assert loose["line_spacing"] == 1.6
+
+
+def test_order_with_fitted_custom_text_updates_generated_lines_and_font():
+    order = {
+        "print_line_1": "ALPHA BETA GAMMA",
+        "print_line_2": "",
+        "font_size_mm": 7,
+        "model_params": {
+            "text_blocks": {
+                "car": {
+                    "box_width_mm": 46,
+                    "box_height_mm": 14.4,
+                    "font_size_mm": 7,
+                }
+            }
+        },
+    }
+    fitted, layout = order_with_fitted_custom_text(order, {"print_mode": "custom_text"})
+
+    assert layout["fits"] is True
+    assert fitted["print_line_1"] == "ALPHA BETA"
+    assert fitted["print_line_2"] == "GAMMA"
+    assert fitted["model_params"]["text_blocks"]["car"]["font_size_mm"] == layout["font_size_mm"]
+    assert order["print_line_1"] == "ALPHA BETA GAMMA"
+
+
 def test_model_editor_designs_returns_editable_params(tmp_path):
     settings = make_settings(tmp_path)
     app = create_test_app(settings)
@@ -44,6 +102,7 @@ def test_model_editor_designs_returns_editable_params(tmp_path):
             assert_base_layer_aligned(params["thickness_mm"])
             assert 0.2 <= params["relief_height_mm"] <= 2.0
             assert_relief_layer_aligned(params["relief_height_mm"])
+            assert 0.7 <= params["line_spacing"] <= 1.8
             assert 0.2 <= params["text_blocks"]["car"]["relief_height_mm"] <= 2.0
             assert_relief_layer_aligned(params["text_blocks"]["car"]["relief_height_mm"])
 
@@ -231,10 +290,10 @@ def test_admin_order_preview_3d_uses_order_custom_text_lines(tmp_path):
 
     assert preview.status_code == 200
     recorded_order = generator.preview_orders[-1]["order"]
-    assert recorded_order["print_line_1"] == "1234 AB-7"
-    assert recorded_order["print_line_2"] == "+375291234567"
-    assert preview.json()["order"]["print_line_1"] == "1234 AB-7"
-    assert preview.json()["order"]["print_line_2"] == "+375291234567"
+    assert recorded_order["print_line_1"] == "1234 AB-7 +375291234567"
+    assert recorded_order["print_line_2"] == ""
+    assert preview.json()["order"]["print_line_1"] == "1234 AB-7 +375291234567"
+    assert preview.json()["order"]["print_line_2"] == ""
 
 
 def test_admin_script_links_each_order_to_3d_preview():

@@ -65,7 +65,7 @@ def build_manifest(root: Path = PROJECT_ROOT) -> dict[str, Any]:
     gateway = env_value(dotenv, "KEYCHAIN_HOTSPOT_GATEWAY", "192.168.137.1")
     ssid = env_value(dotenv, "KEYCHAIN_WIFI_SSID", "KeychainFair")
     password = env_value(dotenv, "KEYCHAIN_WIFI_PASSWORD", "fair2026")
-    public_url = env_value(dotenv, "PUBLIC_URL", f"http://{gateway}:8080").rstrip("/")
+    public_url = env_value(dotenv, "PUBLIC_URL", f"http://{gateway}:8120").rstrip("/")
     order_url = f"{public_url}/"
     admin_url = f"{public_url}/admin"
 

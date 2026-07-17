@@ -20,7 +20,7 @@ services:
       DATABASE_URL: postgresql://keychain:keychain@postgres:5432/keychain_fair
       ADMIN_PIN: ${ADMIN_PIN:-1337}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
-      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:8080}
+      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:8120}
       SLICER_ENABLED: ${SLICER_ENABLED:-false}
       OCTOPRINT_ENABLED: ${OCTOPRINT_ENABLED:-false}
       OCTOPRINT_BASE_URL: ${OCTOPRINT_BASE_URL:-http://host.docker.internal:5000}
@@ -31,7 +31,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "8120:8120"
     volumes:
       - ./designs:/app/designs
       - generated-data:/app/generated
@@ -41,7 +41,7 @@ services:
       context: ./bot
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      API_BASE_URL: http://api:8080
+      API_BASE_URL: http://api:8120
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       BOT_DATABASE_URL: postgresql://keychain:keychain@postgres:5432/keychain_fair
     depends_on:

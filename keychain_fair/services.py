@@ -127,6 +127,12 @@ def _split_custom_text(value: str, limits: dict[str, Any]) -> tuple[str, str]:
     return cleaned[:split_at].strip(), cleaned[split_at:].strip()
 
 
+def _validate_custom_text_length(value: str, limits: dict[str, Any]) -> None:
+    total_limit = int(limits.get("max_total_chars") or 28)
+    if len(value) > total_limit:
+        raise DesignCatalogError(f"Custom text is too long. Maximum length is {total_limit} characters.")
+
+
 class OrderService:
     def __init__(
         self,
@@ -239,14 +245,16 @@ class OrderService:
             return data
 
         if mode == "custom_text":
-            text = " ".join(item for item in [payload.print_line_1.strip(), payload.print_line_2.strip()] if item)
+            first = " ".join(payload.print_line_1.strip().split())
+            second = " ".join(payload.print_line_2.strip().split())
+            text = " ".join(item for item in [first, second] if item)
             if not text:
                 raise DesignCatalogError("Print text is required for custom designs")
             size = next((item for item in design.get("sizes", []) if item.get("id") == payload.size_id), None)
             limits = size.get("custom_text_limits", {}) if isinstance(size, dict) else {}
-            first, second = _split_custom_text(text, limits)
-            data["print_line_1"] = first
-            data["print_line_2"] = second
+            _validate_custom_text_length(text, limits)
+            data["print_line_1"] = text
+            data["print_line_2"] = ""
             return data
 
         return data

@@ -20,11 +20,24 @@ module oval_border(width, height, border_width, height_on_top) {
     }
 }
 
-module print_line(label, x, y, width, height, font_size, relief, z) {
-    fitted = min(font_size, min(width / max(1, len(label)) * 1.35, height * 0.72));
+module print_line(label, x, y, font_size, relief, z) {
     translate([x, y, z])
         linear_extrude(height = relief)
-            text(label, size = fitted, halign = "center", valign = "center", font = "Liberation Sans:style=Bold");
+            text(label, size = max(0.1, font_size), halign = "center", valign = "center", font = "Liberation Sans:style=Bold");
+}
+
+module print_text_block(line_1, line_2, x, y, width, height, font_size, relief, z, line_spacing) {
+    max_line_len = line_2 != "" ? max(len(line_1), len(line_2)) : len(line_1);
+    safe_spacing = min(1.8, max(0.7, line_spacing));
+    height_limit = line_2 != "" ? height / (1 + safe_spacing) : height * 0.72;
+    fitted = min(font_size, min(width / max(1, max_line_len) * 1.35, height_limit));
+    if (line_2 != "") {
+        gap = fitted * safe_spacing;
+        print_line(line_1, x, y + gap / 2, fitted, relief, z);
+        print_line(line_2, x, y - gap / 2, fitted, relief, z);
+    } else {
+        print_line(line_1, x, y, fitted, relief, z);
+    }
 }
 
 module keychain(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params = []) {
@@ -39,11 +52,7 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
     line_1_height = block_param_pos(editor_params, "car", 3, body_height * 0.34);
     line_1_font = block_param_pos(editor_params, "car", 4, font_size);
     line_1_relief = block_param_pos(editor_params, "car", 5, relief_height);
-    line_2_width = block_param_pos(editor_params, "phone", 2, body_width - 18);
-    line_2_height = block_param_pos(editor_params, "phone", 3, body_height * 0.22);
-    line_2_font = block_param_pos(editor_params, "phone", 4, font_size * 0.56);
-    line_2_relief = block_param_pos(editor_params, "phone", 5, relief_height);
-    has_second_line = line_2 != "";
+    line_spacing = ep(editor_params, 26, 1.08);
 
     difference() {
         linear_extrude(height = body_thickness) oval_2d(body_width, body_height);
@@ -61,10 +70,16 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
                 cylinder(h = min(0.70, relief_height + 0.10), r = hole_radius + 0.22, $fn = 32);
         }
 
-    if (has_second_line) {
-        print_line(line_1, body_width / 2 + block_param(editor_params, "car", 0, 0), body_height * 0.58 + block_param(editor_params, "car", 1, 0), line_1_width, line_1_height, line_1_font, line_1_relief, body_thickness);
-        print_line(line_2, body_width / 2 + block_param(editor_params, "phone", 0, 0), body_height * 0.36 + block_param(editor_params, "phone", 1, 0), line_2_width, line_2_height, line_2_font, line_2_relief, body_thickness);
-    } else {
-        print_line(line_1, body_width / 2 + block_param(editor_params, "car", 0, 0), body_height / 2 + block_param(editor_params, "car", 1, 0), line_1_width, max(line_1_height, body_height * 0.45), line_1_font, line_1_relief, body_thickness);
-    }
+    print_text_block(
+        line_1,
+        line_2,
+        body_width / 2 + block_param(editor_params, "car", 0, 0),
+        body_height / 2 + block_param(editor_params, "car", 1, 0),
+        line_1_width,
+        line_1_height,
+        line_1_font,
+        line_1_relief,
+        body_thickness,
+        line_spacing
+    );
 }

@@ -144,19 +144,21 @@ def custom_text_limits_for_size(size: dict[str, Any]) -> dict[str, int]:
     params = size.get("editor_params") if isinstance(size.get("editor_params"), dict) else {}
     blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
 
-    def line_limit(block_name: str, fallback: int) -> int:
-        block = blocks.get(block_name) if isinstance(blocks.get(block_name), dict) else {}
-        try:
-            width = float(block.get("box_width_mm"))
-            font_size = float(block.get("font_size_mm"))
-        except (TypeError, ValueError):
-            return fallback
-        if width <= 0 or font_size <= 0:
-            return fallback
-        return max(1, math.floor(width * 1.35 / (font_size * 0.9)))
+    block = blocks.get("car") if isinstance(blocks.get("car"), dict) else {}
+    try:
+        width = float(block.get("box_width_mm"))
+        height = float(block.get("box_height_mm"))
+    except (TypeError, ValueError):
+        width = 0
+        height = 0
+    if width <= 0:
+        width = float(size.get("width_mm", 60)) - 22
+    if height <= 0:
+        height = float(size.get("height_mm", 24)) * 0.48
 
-    first = line_limit("car", 14)
-    second = line_limit("phone", 14)
+    min_font = 6.0
+    first = max(1, math.floor(width * 1.35 / (min_font * 0.82)))
+    second = first if height / 2.08 >= min_font else 0
     return {
         "max_total_chars": first + second,
         "max_line_1_chars": first,

@@ -3,8 +3,8 @@ setlocal
 cd /d "%~dp0"
 
 set "PUBLIC_URL="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Get-KeychainLanUrl.ps1" -Port 8080`) do set "PUBLIC_URL=%%I"
-if not defined PUBLIC_URL set "PUBLIC_URL=http://127.0.0.1:8080"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Get-KeychainLanUrl.ps1" -Port 8120`) do set "PUBLIC_URL=%%I"
+if not defined PUBLIC_URL set "PUBLIC_URL=http://127.0.0.1:8120"
 
 set "DOCKER_PATH="
 for /f "delims=" %%I in ('where docker 2^>nul') do (

@@ -2,7 +2,7 @@
   "id": "rounded_tag",
   "sort_order": 4,
   "name": "Кастомный овальный",
-  "description": "Овальный брелок для произвольного текста в одну или две строки.",
+  "description": "Овальный брелок для произвольного текста.",
   "template": "rounded_tag.scad",
   "print_mode": "custom_text",
   "accent": "#35a7a0",
@@ -27,6 +27,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 4.0,
           "y_mm": 14.0,
@@ -45,7 +46,7 @@
             "x_offset_mm": 1.6,
             "y_offset_mm": 1.7,
             "box_width_mm": 30.0,
-            "box_height_mm": 7.5,
+            "box_height_mm": 13.44,
             "font_size_mm": 5.0,
             "relief_height_mm": 0.8
           },
@@ -75,6 +76,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 7,
           "y_mm": 17,
@@ -92,8 +94,8 @@
           "car": {
             "x_offset_mm": 0,
             "y_offset_mm": 0,
-            "box_width_mm": 40,
-            "box_height_mm": 11.56,
+            "box_width_mm": 44,
+            "box_height_mm": 16.32,
             "font_size_mm": 6.5,
             "relief_height_mm": 0.8
           },
@@ -123,6 +125,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 4.0,
           "y_mm": 20.0,
@@ -141,7 +144,7 @@
             "x_offset_mm": 0.0,
             "y_offset_mm": 0.0,
             "box_width_mm": 50.0,
-            "box_height_mm": 9.0,
+            "box_height_mm": 19.2,
             "font_size_mm": 6.0,
             "relief_height_mm": 0.8
           },

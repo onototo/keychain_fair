@@ -8,13 +8,13 @@
 cd D:\2COEm\keychain-fair
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\python -m uvicorn keychain_fair.main:app --host 0.0.0.0 --port 8080
+.\.venv\Scripts\python -m uvicorn keychain_fair.main:app --host 0.0.0.0 --port 8120
 ```
 
 Открыть:
 
-- Покупательский сайт: `http://127.0.0.1:8080/`
-- Панель оператора: `http://127.0.0.1:8080/admin`
+- Покупательский сайт: `http://127.0.0.1:8120/`
+- Панель оператора: `http://127.0.0.1:8120/admin`
 
 PIN оператора задается в `.env` переменной `ADMIN_PIN`.
 
@@ -35,4 +35,3 @@ MVP работает без установленного OpenSCAD/Cura/OctoPrint
 ```powershell
 .\.venv\Scripts\python -m pytest
 ```
-

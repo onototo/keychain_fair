@@ -49,5 +49,5 @@ def test_custom_designs_expose_text_limits():
     rectangular = [size["custom_text_limits"]["max_total_chars"] for size in designs["classic_plate"]["sizes"]]
     oval = [size["custom_text_limits"]["max_total_chars"] for size in designs["rounded_tag"]["sizes"]]
 
-    assert rectangular == [22, 26, 29]
-    assert oval == [20, 27, 29]
+    assert rectangular == [22, 24, 30]
+    assert oval == [16, 24, 26]

@@ -70,22 +70,22 @@ python -m venv .venv
 Запуск:
 
 ```powershell
-.\.venv\Scripts\python -m uvicorn keychain_fair.main:app --host 0.0.0.0 --port 8080
+.\.venv\Scripts\python -m uvicorn keychain_fair.main:app --host 0.0.0.0 --port 8120
 ```
 
 Проверка:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/designs
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8120/api/health
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8120/api/designs
 ```
 
 Открыть в браузере:
 
-- Покупатель: `http://127.0.0.1:8080/`
-- Оператор: `http://127.0.0.1:8080/admin`
+- Покупатель: `http://127.0.0.1:8120/`
+- Оператор: `http://127.0.0.1:8120/admin`
 
-PIN оператора по умолчанию сейчас `1234`; менять в `.env`:
+PIN оператора по умолчанию сейчас `1337`; менять в `.env`:
 
 ```env
 ADMIN_PIN=1337
@@ -98,13 +98,13 @@ OCTOPRINT_API_KEY=
 2. Запустить сервер с `--host 0.0.0.0`.
 3. Открыть `/admin`.
 4. В правом блоке админки будет QR и локальный URL сайта.
-5. Покупатели должны открыть именно IP ноутбука в этой сети, например `http://192.168.x.x:8080/`.
+5. Покупатели должны открыть именно IP ноутбука в этой сети, например `http://192.168.x.x:8120/`.
 
 Если телефон не открывает сайт:
 
 - проверить, что телефон в той же сети;
-- проверить Windows Firewall для Python/порта 8080;
-- открыть `http://<ip-ноутбука>:8080/api/health` с телефона.
+- проверить Windows Firewall для Python/порта 8120;
+- открыть `http://<ip-ноутбука>:8120/api/health` с телефона.
 
 ## 6. Проверка автотестами
 
@@ -227,9 +227,9 @@ octoprint:
 ## 10. Типовой ручной smoke-тест
 
 1. Запустить сервер.
-2. Открыть `http://127.0.0.1:8080/`.
+2. Открыть `http://127.0.0.1:8120/`.
 3. Создать заказ.
-4. Открыть `http://127.0.0.1:8080/admin`, PIN `1337`.
+4. Открыть `http://127.0.0.1:8120/admin`, PIN `1337`.
 5. Перевести заказ в `оплачен`.
 6. Нажать `Обработать очередь`.
 7. Если OpenSCAD не настроен, заказ должен перейти в `ошибка` с понятной диагностикой.
@@ -266,7 +266,7 @@ module keychain(customer_name, car_number, phone_number, selected_elements, plat
 Проверить порт:
 
 ```powershell
-Get-NetTCPConnection -LocalPort 8080 -State Listen
+Get-NetTCPConnection -LocalPort 8120 -State Listen
 ```
 
 Остановить uvicorn:
@@ -280,7 +280,7 @@ Get-CimInstance Win32_Process |
 Проверить OpenSCAD из приложения:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing -Headers @{ 'X-Admin-Pin'='1234' } http://127.0.0.1:8080/api/admin/tools
+Invoke-WebRequest -UseBasicParsing -Headers @{ 'X-Admin-Pin'='1337' } http://127.0.0.1:8120/api/admin/tools
 ```
 
 Посмотреть логи:

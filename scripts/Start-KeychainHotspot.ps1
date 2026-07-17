@@ -3,7 +3,7 @@ param(
   [string]$Ssid,
   [string]$Passphrase,
   [string]$Gateway,
-  [int]$Port = 8080,
+  [int]$Port = 8120,
   [switch]$SkipElevation,
   [switch]$ValidateOnly
 )

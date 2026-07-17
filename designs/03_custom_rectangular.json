@@ -2,7 +2,7 @@
   "id": "classic_plate",
   "sort_order": 3,
   "name": "Кастомный прямоугольный",
-  "description": "Прямоугольный брелок для произвольного текста в одну или две строки.",
+  "description": "Прямоугольный брелок для произвольного текста.",
   "template": "classic_plate.scad",
   "print_mode": "custom_text",
   "accent": "#f0b429",
@@ -27,6 +27,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 4.0,
           "y_mm": 20.0,
@@ -44,8 +45,8 @@
           "car": {
             "x_offset_mm": 4.0,
             "y_offset_mm": 0.0,
-            "box_width_mm": 30.0,
-            "box_height_mm": 8.16,
+            "box_width_mm": 42.0,
+            "box_height_mm": 13.0,
             "font_size_mm": 6.0,
             "relief_height_mm": 0.8
           },
@@ -75,6 +76,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 4.0,
           "y_mm": 25.5,
@@ -92,8 +94,8 @@
           "car": {
             "x_offset_mm": 0.0,
             "y_offset_mm": 0.0,
-            "box_width_mm": 42.0,
-            "box_height_mm": 10.2,
+            "box_width_mm": 46.0,
+            "box_height_mm": 14.4,
             "font_size_mm": 7.0,
             "relief_height_mm": 0.8
           },
@@ -125,6 +127,7 @@
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0,
+        "line_spacing": 1.08,
         "hole": {
           "x_mm": 6.5,
           "y_mm": 29.5,
@@ -142,8 +145,8 @@
           "car": {
             "x_offset_mm": 0,
             "y_offset_mm": 0,
-            "box_width_mm": 54,
-            "box_height_mm": 12.24,
+            "box_width_mm": 58,
+            "box_height_mm": 17.28,
             "font_size_mm": 8,
             "relief_height_mm": 0.8
           },

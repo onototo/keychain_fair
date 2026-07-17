@@ -17,7 +17,7 @@ import httpx
 import yaml
 
 from .config import AppSettings
-from .editor import editor_params_to_scad_array
+from .editor import editor_params_to_scad_array, order_with_fitted_custom_text
 
 
 FILAMENT_CHANGE_MARKER = "KEYCHAIN_FAIR_FILAMENT_CHANGE"
@@ -236,6 +236,7 @@ class OpenScadModelGenerator:
         target_dir.mkdir(parents=True, exist_ok=True)
         wrapper_path = target_dir / f"{file_stem}.scad"
         stl_path = target_dir / f"{file_stem}.stl"
+        order, text_layout = order_with_fitted_custom_text(order, design)
         element_shapes = [item.get("shape", item["id"]) for item in order["selected_elements"]]
         if design.get("print_mode") == "by_number_single" and not element_shapes:
             element_shapes = ["car"]
@@ -289,6 +290,8 @@ class OpenScadModelGenerator:
         if result.extra is None:
             result = AdapterResult(result.success, result.message, result.output_path, {})
         result.extra["wrapper_scad_path"] = str(wrapper_path)
+        if text_layout is not None:
+            result.extra["text_layout"] = text_layout
         return result
 
     def combine_batch_stl(self, batch_id: str, layout_items: list[dict[str, Any]]) -> AdapterResult:

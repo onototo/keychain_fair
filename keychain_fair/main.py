@@ -20,6 +20,7 @@ from .database import Database
 from .designs import DesignCatalog, DesignCatalogError
 from .editor import (
     bounds_for_params,
+    custom_text_layout_for_order,
     designs_for_editor,
     normalize_editor_params,
     preview_order_payload,
@@ -520,6 +521,7 @@ def create_app(
             "bounds": bounds_for_params(design, params, order["selected_elements"]),
             "filament_change_height_mm": params.get("thickness_mm", order["thickness_mm"]),
             "stl_url": f"/api/admin/model-editor/previews/{preview_id}.stl",
+            "text_layout": custom_text_layout_for_order(order, design),
             "order": {
                 "id": order["id"],
                 "customer_name": order["customer_name"],
@@ -631,6 +633,7 @@ def create_app(
             "bounds": bounds_for_params(design, params, order["selected_elements"]),
             "filament_change_height_mm": params["thickness_mm"],
             "stl_url": f"/api/admin/model-editor/previews/{preview_id}.stl",
+            "text_layout": custom_text_layout_for_order(order, design),
         }
 
     @app.get("/api/admin/model-editor/previews/{preview_id}.stl", dependencies=[Depends(require_admin)])

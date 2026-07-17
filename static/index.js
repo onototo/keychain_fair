@@ -16,10 +16,8 @@ const designName = document.querySelector("#designName");
 const customerNameInput = form.elements.customer_name;
 const carNumberInput = form.elements.car_number;
 const printLine1Input = form.elements.print_line_1;
-const printLine2Input = form.elements.print_line_2;
 const carNumberField = document.querySelector("#carNumberField");
 const printLine1Field = document.querySelector("#printLine1Field");
-const printLine2Field = document.querySelector("#printLine2Field");
 const customTextHelp = document.querySelector("#customTextHelp");
 
 const FALLBACK_PREVIEW = "/static/design-previews/fallback.png";
@@ -132,7 +130,6 @@ function sanitizeFields() {
   customerNameInput.value = sanitizeName(customerNameInput.value);
   carNumberInput.value = sanitizeCarNumber(carNumberInput.value);
   printLine1Input.value = sanitizePrintLine(printLine1Input.value);
-  printLine2Input.value = sanitizePrintLine(printLine2Input.value);
 }
 
 function validateFields() {
@@ -141,21 +138,17 @@ function validateFields() {
   const name = customerNameInput.value.trim();
   const carNumber = carNumberInput.value.trim();
   const printLine1 = printLine1Input.value.trim();
-  const printLine2 = printLine2Input.value.trim();
   const limits = customTextLimits(design, selectedSize(design));
   const maxCustomLength = Number(limits.max_total_chars || 48);
-  const customLength = printLine1.length + printLine2.length;
+  const customLength = printLine1.length;
 
   carNumberInput.required = !custom;
   carNumberInput.disabled = custom;
   printLine1Input.disabled = !custom;
-  printLine2Input.disabled = !custom;
   printLine1Input.maxLength = maxCustomLength;
-  printLine2Input.maxLength = maxCustomLength;
 
   carNumberField.hidden = custom;
   printLine1Field.hidden = !custom;
-  printLine2Field.hidden = !custom;
   if (customTextHelp) {
     customTextHelp.textContent = custom ? `Максимальная длина текста: ${maxCustomLength} символов.` : "";
   }
@@ -169,13 +162,12 @@ function validateFields() {
       : "Номер авто: РБ 1234 AB-7",
   );
   printLine1Input.setCustomValidity(
-    custom && !printLine1 && !printLine2
+    custom && !printLine1
       ? "Введите текст для печати"
       : custom && customLength > maxCustomLength
         ? `Максимальная длина текста: ${maxCustomLength} символов`
         : "",
   );
-  printLine2Input.setCustomValidity(custom && customLength > maxCustomLength ? `Максимальная длина текста: ${maxCustomLength} символов` : "");
 }
 
 function renderDesigns() {
@@ -246,8 +238,7 @@ form.addEventListener("input", (event) => {
   if (
     event.target === customerNameInput ||
     event.target === carNumberInput ||
-    event.target === printLine1Input ||
-    event.target === printLine2Input
+    event.target === printLine1Input
   ) {
     sanitizeFields();
     validateFields();
@@ -282,7 +273,7 @@ form.addEventListener("submit", async (event) => {
     size_id: String(data.get("size_id") || ""),
     elements: [],
     print_line_1: String(data.get("print_line_1") || ""),
-    print_line_2: String(data.get("print_line_2") || ""),
+    print_line_2: "",
     idempotency_key: currentOrderKey(),
     client_id: currentClientId(),
   };

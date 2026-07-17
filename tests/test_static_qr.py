@@ -3,7 +3,8 @@ import json
 from scripts.generate_static_qr import generate_qr_assets
 
 
-def test_generate_static_qr_assets_from_env_file(tmp_path):
+def test_generate_static_qr_assets_from_env_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("PUBLIC_URL", raising=False)
     (tmp_path / ".env").write_text(
         "\n".join(
             [

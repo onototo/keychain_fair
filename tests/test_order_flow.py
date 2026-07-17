@@ -221,7 +221,7 @@ def test_custom_order_keeps_one_short_print_line(tmp_path):
     assert order["print_line_2"] == ""
 
 
-def test_custom_order_splits_one_long_print_line(tmp_path):
+def test_custom_order_keeps_one_long_print_line_for_model_layout(tmp_path):
     settings = make_settings(tmp_path)
     app = create_test_app(settings)
 
@@ -239,11 +239,11 @@ def test_custom_order_splits_one_long_print_line(tmp_path):
         order = response.json()["order"]
 
     assert response.status_code == 201
-    assert order["print_line_1"] == "LONG"
-    assert order["print_line_2"] == "WORDS"
+    assert order["print_line_1"] == "LONG WORDS"
+    assert order["print_line_2"] == ""
 
 
-def test_custom_order_keeps_two_print_lines(tmp_path):
+def test_custom_order_combines_legacy_second_print_line(tmp_path):
     settings = make_settings(tmp_path)
     app = create_test_app(settings)
 
@@ -261,8 +261,8 @@ def test_custom_order_keeps_two_print_lines(tmp_path):
         order = response.json()["order"]
 
     assert response.status_code == 201
-    assert order["print_line_1"] == "1234 AB-7"
-    assert order["print_line_2"] == "+375291234567"
+    assert order["print_line_1"] == "1234 AB-7 +375291234567"
+    assert order["print_line_2"] == ""
 
 
 def test_custom_order_rejects_text_over_size_limit(tmp_path):
@@ -275,13 +275,13 @@ def test_custom_order_rejects_text_over_size_limit(tmp_path):
                 json=order_payload(
                     design_id="classic_plate",
                     size_id="standard",
-                    print_line_1="X" * 19,
+                    print_line_1="X" * 25,
                     idempotency_key="custom-too-long",
                 ),
             )
 
     assert response.status_code == 400
-    assert "Maximum length is 18" in response.json()["detail"]
+    assert "Maximum length is 24" in response.json()["detail"]
 
 
 def test_web_user_can_have_only_two_unpaid_orders_until_payment(tmp_path):

@@ -13,6 +13,10 @@ from .validation import normalize_by_car_number, split_by_car_number
 
 DEFAULT_BASE_HEIGHT_MM = 3.2
 DEFAULT_RELIEF_HEIGHT_MM = 0.8
+CUSTOM_TEXT_MIN_FONT_SIZE_MM = 6.0
+CUSTOM_TEXT_MAX_FONT_SIZE_MM = 40.0
+CUSTOM_TEXT_WIDTH_FACTOR = 1.35
+CUSTOM_TEXT_LINE_GAP_FACTOR = 1.08
 PRINT_FIRST_LAYER_HEIGHT_MM = 0.1
 PRINT_LAYER_HEIGHT_MM = 0.2
 BASE_HEIGHT_MIN_MM = 1.1
@@ -157,6 +161,7 @@ def _default_text_blocks(design: dict[str, Any], base_width: float, base_height:
             },
         }
 
+    car_height = base_height * (0.48 if design.get("print_mode") == "custom_text" else 0.34)
     return {
         "name": {
             "x_offset_mm": 0.0,
@@ -170,7 +175,7 @@ def _default_text_blocks(design: dict[str, Any], base_width: float, base_height:
             "x_offset_mm": 0.0,
             "y_offset_mm": 0.0,
             "box_width_mm": round(max(8.0, base_width - 22.0), 3),
-            "box_height_mm": round(max(5.0, base_height * 0.34), 3),
+            "box_height_mm": round(max(5.0, car_height), 3),
             "font_size_mm": round(font_size, 3),
             "relief_height_mm": relief,
         },
@@ -203,6 +208,7 @@ def default_editor_params(design: dict[str, Any], size: dict[str, Any], base_hei
             "thickness_mm": _base_height(size.get("thickness_mm"), base_height_mm),
             "relief_height_mm": _relief_height(size.get("relief_height_mm"), DEFAULT_RELIEF_HEIGHT_MM),
             "section_overlap_mm": round(_default_overlap_mm(design, size), 3) if is_stacked_design(design) else 0.0,
+            "line_spacing": CUSTOM_TEXT_LINE_GAP_FACTOR,
             "hole": {
                 "x_mm": round(hole_x, 3),
                 "y_mm": round(hole_y, 3),
@@ -232,6 +238,7 @@ def normalize_editor_params(
             "thickness_mm": _base_height(size.get("thickness_mm"), base_height_mm),
             "relief_height_mm": _relief_height(size.get("relief_height_mm"), DEFAULT_RELIEF_HEIGHT_MM),
             "section_overlap_mm": round(_default_overlap_mm(design, size), 3) if is_stacked_design(design) else 0.0,
+            "line_spacing": CUSTOM_TEXT_LINE_GAP_FACTOR,
             "hole": {
                 "x_mm": 0.0 if is_stacked_design(design) else (7.0 if design.get("id") == "rounded_tag" else 6.5),
                 "y_mm": 0.0 if is_stacked_design(design) else (base_height / 2 if design.get("id") == "rounded_tag" else max(6.5, base_height - 6.5)),
@@ -258,6 +265,10 @@ def normalize_editor_params(
             ),
             3,
         ),
+        "line_spacing": round(
+            _clamp(source.get("line_spacing"), default.get("line_spacing", CUSTOM_TEXT_LINE_GAP_FACTOR), 0.7, 1.8),
+            3,
+        ),
         "hole": {
             "x_mm": round(_clamp(hole_source.get("x_mm"), default_hole.get("x_mm", 0), -80, 160), 3),
             "y_mm": round(_clamp(hole_source.get("y_mm"), default_hole.get("y_mm", 0), -80, 160), 3),
@@ -282,6 +293,157 @@ def normalize_editor_params(
     return normalized
 
 
+def _clean_layout_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _visual_text_length(value: str) -> float:
+    total = 0.0
+    for char in value:
+        if char == " ":
+            total += 0.45
+        elif char in ".,:;|!ilI1'`":
+            total += 0.55
+        elif char in "MW@#%&":
+            total += 1.25
+        else:
+            total += 1.0
+    return max(total, 1.0)
+
+
+def _candidate_font_size(lines: list[str], box_width: float, box_height: float, line_spacing: float = CUSTOM_TEXT_LINE_GAP_FACTOR) -> float:
+    cleaned_lines = [_clean_layout_text(line) for line in lines if _clean_layout_text(line)]
+    if not cleaned_lines:
+        return CUSTOM_TEXT_MIN_FONT_SIZE_MM
+
+    width_size = min(box_width / _visual_text_length(line) * CUSTOM_TEXT_WIDTH_FACTOR for line in cleaned_lines)
+    line_count = len(cleaned_lines)
+    if line_count <= 1:
+        height_size = box_height * 0.72
+    else:
+        gap = _clamp(line_spacing, CUSTOM_TEXT_LINE_GAP_FACTOR, 0.7, 1.8)
+        height_size = box_height / (line_count + (line_count - 1) * (gap - 1.0))
+    return max(0.0, min(width_size, height_size, CUSTOM_TEXT_MAX_FONT_SIZE_MM))
+
+
+def _split_candidate(full_text: str, split_at: int) -> list[str]:
+    return [_clean_layout_text(full_text[:split_at]), _clean_layout_text(full_text[split_at:])]
+
+
+def _two_line_candidates(full_text: str) -> list[list[str]]:
+    if len(full_text) <= 1:
+        return [[full_text]]
+
+    candidates: list[list[str]] = []
+    for index, char in enumerate(full_text):
+        if char == " ":
+            candidate = _split_candidate(full_text, index)
+            if all(candidate):
+                candidates.append(candidate)
+
+    if candidates:
+        return candidates
+
+    midpoint = len(full_text) / 2
+    for index in sorted({max(1, min(len(full_text) - 1, int(midpoint))), max(1, min(len(full_text) - 1, round(midpoint)))}):
+        candidate = _split_candidate(full_text, index)
+        if all(candidate):
+            candidates.append(candidate)
+
+    unique: list[list[str]] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        key = (candidate[0], candidate[1])
+        if key not in seen:
+            unique.append(candidate)
+            seen.add(key)
+    return unique or [[full_text]]
+
+
+def fit_custom_text_layout(
+    text: str,
+    box_width_mm: float,
+    box_height_mm: float,
+    min_font_size_mm: float = CUSTOM_TEXT_MIN_FONT_SIZE_MM,
+    line_spacing: float = CUSTOM_TEXT_LINE_GAP_FACTOR,
+) -> dict[str, Any]:
+    full_text = _clean_layout_text(text)
+    if not full_text:
+        return {
+            "lines": ["", ""],
+            "font_size_mm": round(min_font_size_mm, 3),
+            "fits": True,
+            "min_font_size_mm": round(min_font_size_mm, 3),
+            "line_spacing": round(_clamp(line_spacing, CUSTOM_TEXT_LINE_GAP_FACTOR, 0.7, 1.8), 3),
+        }
+
+    one_line = [full_text]
+    spacing = _clamp(line_spacing, CUSTOM_TEXT_LINE_GAP_FACTOR, 0.7, 1.8)
+    one_line_size = _candidate_font_size(one_line, box_width_mm, box_height_mm, spacing)
+    if one_line_size >= min_font_size_mm:
+        return {
+            "lines": [full_text, ""],
+            "font_size_mm": round(one_line_size, 3),
+            "fits": True,
+            "min_font_size_mm": round(min_font_size_mm, 3),
+            "line_spacing": round(spacing, 3),
+        }
+
+    wrapped = _two_line_candidates(full_text)
+    best_lines = max(wrapped, key=lambda lines: _candidate_font_size(lines, box_width_mm, box_height_mm, spacing))
+    best_size = _candidate_font_size(best_lines, box_width_mm, box_height_mm, spacing)
+    return {
+        "lines": [best_lines[0], best_lines[1] if len(best_lines) > 1 else ""],
+        "font_size_mm": round(best_size, 3),
+        "fits": best_size >= min_font_size_mm,
+        "min_font_size_mm": round(min_font_size_mm, 3),
+        "line_spacing": round(spacing, 3),
+    }
+
+
+def custom_text_layout_for_order(order: dict[str, Any], design: dict[str, Any]) -> dict[str, Any] | None:
+    if design.get("print_mode") != "custom_text":
+        return None
+    params = order.get("model_params")
+    if not isinstance(params, dict):
+        return None
+    text_blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
+    block = text_blocks.get("car") if isinstance(text_blocks.get("car"), dict) else {}
+    box_width = _float(block.get("box_width_mm"), _float(params.get("base_width_mm"), 60.0) - 22.0)
+    box_height = _float(block.get("box_height_mm"), _float(params.get("base_height_mm"), 24.0) * 0.48)
+    line_spacing = _float(params.get("line_spacing"), CUSTOM_TEXT_LINE_GAP_FACTOR)
+    full_text = " ".join(
+        item
+        for item in [
+            _clean_layout_text(order.get("print_line_1")),
+            _clean_layout_text(order.get("print_line_2")),
+        ]
+        if item
+    )
+    layout = fit_custom_text_layout(full_text, max(1.0, box_width), max(1.0, box_height), line_spacing=line_spacing)
+    layout["box_width_mm"] = round(max(1.0, box_width), 3)
+    layout["box_height_mm"] = round(max(1.0, box_height), 3)
+    return layout
+
+
+def order_with_fitted_custom_text(order: dict[str, Any], design: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    layout = custom_text_layout_for_order(order, design)
+    if layout is None:
+        return order, None
+
+    fitted_order = deepcopy(order)
+    fitted_params = deepcopy(order.get("model_params"))
+    text_blocks = fitted_params.setdefault("text_blocks", {})
+    car_block = text_blocks.setdefault("car", {})
+    car_block["font_size_mm"] = layout["font_size_mm"]
+    lines = layout["lines"]
+    fitted_order["model_params"] = fitted_params
+    fitted_order["print_line_1"] = lines[0]
+    fitted_order["print_line_2"] = lines[1]
+    fitted_order["font_size_mm"] = layout["font_size_mm"]
+    return fitted_order, layout
+
+
 def editor_params_to_scad_array(params: dict[str, Any]) -> str:
     values: list[float] = [
         _float(params.get("base_width_mm"), 60.0),
@@ -303,6 +465,7 @@ def editor_params_to_scad_array(params: dict[str, Any]) -> str:
         for field in TEXT_BLOCK_FIELDS:
             values.append(_float(block.get(field), 0.0))
     values.append(_float(params.get("section_overlap_mm"), 0.0))
+    values.append(_float(params.get("line_spacing"), CUSTOM_TEXT_LINE_GAP_FACTOR))
     return "[" + ", ".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in values) + "]"
 
 
@@ -372,7 +535,7 @@ def preview_order_payload(
             print_line_1 = "1234 AB-7"
     elif mode == "custom_text":
         print_line_1 = str(sample_text.get("print_line_1") if isinstance(sample_text, dict) and sample_text.get("print_line_1") else sample["car_number"])
-        print_line_2 = str(sample_text.get("print_line_2") if isinstance(sample_text, dict) and sample_text.get("print_line_2") else sample["print_line_2"])
+        print_line_2 = ""
 
     width, height = final_dimensions_mm(design, params, selected)
     car_block = params.get("text_blocks", {}).get("car", {}) if isinstance(params.get("text_blocks"), dict) else {}
