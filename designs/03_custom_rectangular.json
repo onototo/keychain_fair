@@ -13,46 +13,46 @@
     {
       "id": "compact",
       "label": "Компактный",
-      "width_mm": 56,
-      "height_mm": 24,
+      "width_mm": 56.0,
+      "height_mm": 24.0,
       "thickness_mm": 2.1,
       "relief_height_mm": 0.8,
-      "font_size_mm": 6,
+      "font_size_mm": 6.0,
       "model_scale": 1,
       "legacy_model_scale": 1,
       "price": 12,
       "editor_params": {
-        "base_width_mm": 56,
-        "base_height_mm": 24,
+        "base_width_mm": 56.0,
+        "base_height_mm": 24.0,
         "thickness_mm": 2.1,
         "relief_height_mm": 0.8,
-        "section_overlap_mm": 0,
+        "section_overlap_mm": 0.0,
         "hole": {
-          "x_mm": 6.5,
-          "y_mm": 17.5,
+          "x_mm": 4.0,
+          "y_mm": 20.0,
           "radius_mm": 2.35
         },
         "text_blocks": {
           "name": {
-            "x_offset_mm": 0,
-            "y_offset_mm": 0,
-            "box_width_mm": 0,
-            "box_height_mm": 0,
+            "x_offset_mm": 0.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 0.0,
+            "box_height_mm": 0.0,
             "font_size_mm": 4.32,
             "relief_height_mm": 0.8
           },
           "car": {
-            "x_offset_mm": 4,
-            "y_offset_mm": 0,
-            "box_width_mm": 30,
+            "x_offset_mm": 4.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 30.0,
             "box_height_mm": 8.16,
-            "font_size_mm": 6,
+            "font_size_mm": 6.0,
             "relief_height_mm": 0.8
           },
           "phone": {
-            "x_offset_mm": 2,
-            "y_offset_mm": 0,
-            "box_width_mm": 34,
+            "x_offset_mm": 2.0,
+            "y_offset_mm": 0.0,
+            "box_width_mm": 34.0,
             "box_height_mm": 5.28,
             "font_size_mm": 3.36,
             "relief_height_mm": 0.8
@@ -76,8 +76,8 @@
         "relief_height_mm": 0.8,
         "section_overlap_mm": 0.0,
         "hole": {
-          "x_mm": 6.5,
-          "y_mm": 23.5,
+          "x_mm": 4.0,
+          "y_mm": 25.5,
           "radius_mm": 2.35
         },
         "text_blocks": {

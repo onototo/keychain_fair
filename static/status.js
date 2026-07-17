@@ -4,7 +4,6 @@ const statusLabel = document.querySelector("#statusLabel");
 const updatedAt = document.querySelector("#updatedAt");
 const customer = document.querySelector("#customer");
 const car = document.querySelector("#car");
-const phone = document.querySelector("#phone");
 const details = document.querySelector("#details");
 
 orderIdNode.textContent = orderId;
@@ -28,11 +27,9 @@ async function refresh() {
   updatedAt.textContent = formatDate(order.updated_at);
   customer.textContent = order.customer_name;
   car.textContent = order.car_number;
-  phone.textContent = order.phone;
   details.textContent = order.error_message || `${order.design_name} · ${order.size_label}`;
   statusLabel.className = order.status === "error" ? "pill error" : "";
 }
 
 refresh();
 setInterval(refresh, 4000);
-

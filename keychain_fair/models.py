@@ -5,13 +5,13 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from . import statuses
-from .validation import normalize_car_number, normalize_customer_name, normalize_phone
+from .validation import normalize_car_number, normalize_customer_name
 
 
 class OrderCreate(BaseModel):
     customer_name: str = Field(min_length=2, max_length=30)
     car_number: str = Field(default="", max_length=16)
-    phone: str = Field(min_length=11, max_length=13)
+    phone: str = Field(default="", max_length=13)
     design_id: str
     size_id: str
     elements: list[str] = Field(default_factory=list, max_length=6)
@@ -31,11 +31,6 @@ class OrderCreate(BaseModel):
         if not value or not value.strip():
             return ""
         return normalize_car_number(value)
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, value: str) -> str:
-        return normalize_phone(value)
 
     @field_validator("print_line_1", "print_line_2")
     @classmethod

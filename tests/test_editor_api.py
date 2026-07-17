@@ -2,7 +2,18 @@ import json
 
 from fastapi.testclient import TestClient
 
-from tests.support import ADMIN_HEADERS, create_test_app, make_settings, make_temp_design_settings, order_payload
+from keychain_fair.config import PROJECT_ROOT
+from tests.support import ADMIN_HEADERS, FakeGenerator, create_test_app, make_settings, make_temp_design_settings, order_payload
+
+
+class RecordingPreviewGenerator(FakeGenerator):
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.preview_orders = []
+
+    def generate_preview_stl(self, preview_id, order, design):
+        self.preview_orders.append({"preview_id": preview_id, "order": dict(order), "design": dict(design)})
+        return super().generate_preview_stl(preview_id, order, design)
 
 
 def assert_base_layer_aligned(value):
@@ -52,7 +63,7 @@ def test_model_editor_preview_creates_authenticated_stl(tmp_path):
                 "design_id": design["id"],
                 "size_id": size["id"],
                 "editor_params": size["editor_params"],
-                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "phone": "375291234567"},
+                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "print_line_2": ""},
             },
         )
         assert response.status_code == 200
@@ -82,7 +93,7 @@ def test_model_editor_preview_uses_current_editor_base_height(tmp_path):
                 "design_id": design["id"],
                 "size_id": size["id"],
                 "editor_params": params,
-                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "phone": "375291234567"},
+                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "print_line_2": ""},
             },
         )
 
@@ -109,7 +120,7 @@ def test_model_editor_preview_snaps_base_height_to_layer_grid(tmp_path):
                 "design_id": design["id"],
                 "size_id": size["id"],
                 "editor_params": params,
-                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "phone": "375291234567"},
+                "sample_text": {"customer_name": "Nikita", "car_number": "A123BC77", "print_line_2": ""},
             },
         )
 
@@ -117,6 +128,120 @@ def test_model_editor_preview_snaps_base_height_to_layer_grid(tmp_path):
     payload = response.json()
     assert payload["filament_change_height_mm"] == 2.1
     assert payload["bounds"]["z"] == 2.9
+
+
+def test_admin_order_preview_3d_requires_admin_pin(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post("/api/admin/orders/missing/preview-3d")
+
+    assert response.status_code == 401
+
+
+def test_admin_order_preview_3d_creates_authenticated_stl(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        order_response = client.post("/api/orders", json=order_payload(idempotency_key="order-preview-stl"))
+        assert order_response.status_code == 201
+        order_id = order_response.json()["order"]["id"]
+
+        response = client.post(f"/api/admin/orders/{order_id}/preview-3d", headers=ADMIN_HEADERS)
+        assert response.status_code == 200
+        payload = response.json()
+        stl_response = client.get(payload["stl_url"], headers=ADMIN_HEADERS)
+
+    assert payload["preview_id"].startswith("prv_order_")
+    assert payload["order"]["id"] == order_id
+    assert payload["order"]["print_line_1"] == "Hello"
+    assert payload["bounds"]["width"] == 64
+    assert payload["filament_change_height_mm"] == 2.1
+    assert stl_response.status_code == 200
+    assert b"solid preview" in stl_response.content
+
+
+def test_admin_order_preview_3d_missing_order_returns_404(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post("/api/admin/orders/missing/preview-3d", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 404
+
+
+def test_admin_order_preview_3d_uses_order_model_params_snapshot(tmp_path):
+    settings = make_temp_design_settings(tmp_path)
+    generator = RecordingPreviewGenerator(settings)
+    app = create_test_app(settings, generator=generator)
+
+    with TestClient(app) as client:
+        order_response = client.post(
+            "/api/orders",
+            json=order_payload(idempotency_key="order-preview-snapshot"),
+        )
+        assert order_response.status_code == 201
+        order_id = order_response.json()["order"]["id"]
+        snapshot = app.state.database.get_order(order_id)["model_params"]
+
+        designs = client.get("/api/admin/model-editor/designs", headers=ADMIN_HEADERS).json()["designs"]
+        design = next(item for item in designs if item["id"] == "classic_plate")
+        size = next(item for item in design["sizes"] if item["id"] == "standard")
+        params = size["editor_params"]
+        params["base_width_mm"] = snapshot["base_width_mm"] + 20
+        params["thickness_mm"] = 4.9
+        save_response = client.post(
+            "/api/admin/model-editor/presets",
+            headers=ADMIN_HEADERS,
+            json={"design_id": design["id"], "size_id": size["id"], "editor_params": params},
+        )
+        assert save_response.status_code == 200
+
+        preview = client.post(f"/api/admin/orders/{order_id}/preview-3d", headers=ADMIN_HEADERS)
+
+    assert preview.status_code == 200
+    assert preview.json()["bounds"]["width"] == snapshot["base_width_mm"]
+    assert preview.json()["filament_change_height_mm"] == snapshot["thickness_mm"]
+    assert generator.preview_orders[-1]["order"]["model_params"] == snapshot
+
+
+def test_admin_order_preview_3d_uses_order_custom_text_lines(tmp_path):
+    settings = make_settings(tmp_path)
+    generator = RecordingPreviewGenerator(settings)
+    app = create_test_app(settings, generator=generator)
+
+    with TestClient(app) as client:
+        order_response = client.post(
+            "/api/orders",
+            json=order_payload(
+                design_id="rounded_tag",
+                size_id="standard",
+                print_line_1="1234 AB-7",
+                print_line_2="+375291234567",
+                idempotency_key="order-preview-custom-text",
+            ),
+        )
+        assert order_response.status_code == 201
+        order_id = order_response.json()["order"]["id"]
+
+        preview = client.post(f"/api/admin/orders/{order_id}/preview-3d", headers=ADMIN_HEADERS)
+
+    assert preview.status_code == 200
+    recorded_order = generator.preview_orders[-1]["order"]
+    assert recorded_order["print_line_1"] == "1234 AB-7"
+    assert recorded_order["print_line_2"] == "+375291234567"
+    assert preview.json()["order"]["print_line_1"] == "1234 AB-7"
+    assert preview.json()["order"]["print_line_2"] == "+375291234567"
+
+
+def test_admin_script_links_each_order_to_3d_preview():
+    script = (PROJECT_ROOT / "static" / "admin.js").read_text(encoding="utf-8")
+
+    assert 'href="/admin/orders/${order.id}/3d"' in script
+    assert 'target="_blank"' in script
 
 
 def test_model_editor_save_preset_updates_size_and_creates_backup(tmp_path):

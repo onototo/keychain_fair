@@ -100,6 +100,23 @@ def test_order_flow_prepares_stl_and_batch_without_printing(tmp_path):
     assert current["gcode_path"] is None
 
 
+def test_order_payloads_do_not_expose_phone(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        order_response = client.post("/api/orders", json=order_payload(idempotency_key="no-phone-order"))
+        assert order_response.status_code == 201
+        order_id = order_response.json()["order"]["id"]
+
+        public_order = client.get(f"/api/orders/{order_id}").json()["order"]
+        admin_order = client.get("/api/admin/orders", headers=ADMIN_HEADERS).json()["orders"][0]
+
+    assert "phone" not in order_response.json()["order"]
+    assert "phone" not in public_order
+    assert "phone" not in admin_order
+
+
 def test_prepare_rebuilds_existing_queued_batch_with_new_ready_orders(tmp_path):
     settings = make_settings(tmp_path)
     app = queue_app(settings)
@@ -211,19 +228,19 @@ def test_custom_order_splits_one_long_print_line(tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/orders",
-            json=order_payload(
-                design_id="classic_plate",
-                size_id="standard",
-                print_line_1="LONG CUSTOM MESSAGE",
-                print_line_2="",
-                idempotency_key="custom-long-line",
-            ),
+                json=order_payload(
+                    design_id="classic_plate",
+                    size_id="standard",
+                    print_line_1="LONG WORDS",
+                    print_line_2="",
+                    idempotency_key="custom-long-line",
+                ),
         )
         order = response.json()["order"]
 
     assert response.status_code == 201
     assert order["print_line_1"] == "LONG"
-    assert order["print_line_2"] == "CUSTOM MESSAGE"
+    assert order["print_line_2"] == "WORDS"
 
 
 def test_custom_order_keeps_two_print_lines(tmp_path):
@@ -255,16 +272,16 @@ def test_custom_order_rejects_text_over_size_limit(tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/orders",
-            json=order_payload(
-                design_id="classic_plate",
-                size_id="standard",
-                print_line_1="X" * 27,
-                idempotency_key="custom-too-long",
-            ),
-        )
+                json=order_payload(
+                    design_id="classic_plate",
+                    size_id="standard",
+                    print_line_1="X" * 19,
+                    idempotency_key="custom-too-long",
+                ),
+            )
 
     assert response.status_code == 400
-    assert "Maximum length is 26" in response.json()["detail"]
+    assert "Maximum length is 18" in response.json()["detail"]
 
 
 def test_web_user_can_have_only_two_unpaid_orders_until_payment(tmp_path):

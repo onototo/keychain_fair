@@ -45,7 +45,6 @@ test("buildOrderPayload includes telegram metadata and custom text", () => {
     sizeId: "standard",
     elements: ["legacy_ignored"],
     customerName: "Anna",
-    phone: "375291234567",
     printLine1: "Hello",
   };
 
@@ -59,6 +58,7 @@ test("buildOrderPayload includes telegram metadata and custom text", () => {
   assert.equal(payload.source, "telegram");
   assert.equal(payload.telegram_chat_id, "42");
   assert.deepEqual(payload.elements, []);
+  assert.equal("phone" in payload, false);
   assert.equal(payload.print_line_1, "Hello");
   assert.equal(payload.print_line_2, "");
 });

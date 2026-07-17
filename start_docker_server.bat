@@ -2,6 +2,10 @@
 setlocal
 cd /d "%~dp0"
 
+set "PUBLIC_URL="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Get-KeychainLanUrl.ps1" -Port 8080`) do set "PUBLIC_URL=%%I"
+if not defined PUBLIC_URL set "PUBLIC_URL=http://127.0.0.1:8080"
+
 set "DOCKER_PATH="
 for /f "delims=" %%I in ('where docker 2^>nul') do (
   if not defined DOCKER_PATH set "DOCKER_PATH=%%I"
@@ -38,13 +42,22 @@ if exist ".venv\Scripts\python.exe" (
   if errorlevel 1 exit /b %ERRORLEVEL%
 )
 
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$root = (Resolve-Path '.').Path;" ^
+  "$pidPath = Join-Path $root 'tmp\keychain_fair_server.pid';" ^
+  "$uvicorn = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*uvicorn*keychain_fair.main:app*' };" ^
+  "$targetIds = @($uvicorn | ForEach-Object { [int]$_.ProcessId } | Sort-Object -Unique);" ^
+  "foreach ($targetId in $targetIds) { $process = Get-Process -Id $targetId -ErrorAction SilentlyContinue; if (-not $process) { continue }; try { Stop-Process -Id $targetId -Force -ErrorAction Stop; Write-Host ('Stopped local server PID ' + $targetId) } catch { if (Get-Process -Id $targetId -ErrorAction SilentlyContinue) { throw } } };" ^
+  "if (Test-Path $pidPath) { Remove-Item $pidPath -Force }"
+if errorlevel 1 exit /b %ERRORLEVEL%
+
 docker compose up --build -d postgres api telegram-bot
 if errorlevel 1 exit /b %ERRORLEVEL%
 
 docker compose ps
 echo.
 echo Docker server started.
-echo Site:  http://127.0.0.1:8080/
-echo Admin: http://127.0.0.1:8080/admin
+echo Site:  %PUBLIC_URL%/
+echo Admin: %PUBLIC_URL%/admin
 
 exit /b 0

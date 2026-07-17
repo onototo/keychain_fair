@@ -28,7 +28,7 @@ def read_dotenv(path: Path) -> dict[str, str]:
 
 
 def env_value(dotenv: dict[str, str], key: str, default: str) -> str:
-    return dotenv.get(key) or os.environ.get(key) or default
+    return os.environ.get(key) or dotenv.get(key) or default
 
 
 def escape_wifi_qr(value: str) -> str:

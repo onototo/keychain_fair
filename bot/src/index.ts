@@ -46,11 +46,6 @@ function mainKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("Новый заказ", "start:new");
 }
 
-function cleanPhone(value: string): string {
-  const cleaned = value.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
-  return cleaned.startsWith("+") ? `+${cleaned.slice(1).replace(/\D/g, "")}` : cleaned.replace(/\D/g, "");
-}
-
 function cleanCarNumber(value: string): string {
   const compact = value.replace(/[\s-]+/g, "").toUpperCase();
   if (/^\d{4}[A-Z]{2}[1-7]$/.test(compact)) {
@@ -78,24 +73,46 @@ async function beginNewOrder(ctx: Context): Promise<void> {
   if (!designs) return;
 
   const session = createDraftSession();
+  await showDesignPicker(ctx, session, designs, "Выберите дизайн брелка.");
+}
+
+async function showDesignPicker(ctx: Context, session: DraftSession, designs: Design[], text: string): Promise<void> {
+  session.step = "design";
   const keyboard = new InlineKeyboard();
   for (const design of designs) {
     keyboard.text(design.name, `design:${design.id}`).row();
   }
+  if (session.data.designId) {
+    keyboard.text("Назад к проверке", "edit:done").row();
+  }
   keyboard.text("Отменить", "cancel");
-  await saveAndReply(ctx, session, "Выберите дизайн брелка.", keyboard);
+  await saveAndReply(ctx, session, text, keyboard);
 }
 
-async function showSizes(ctx: Context, session: DraftSession, design: Design): Promise<void> {
-  session.step = "size";
+function applyDesignDefaults(session: DraftSession, design: Design): void {
   session.data.designId = design.id;
   session.data.sizeId = defaultSizeId(design);
   session.data.elements = defaultElementIds(design);
+  if (isCustomTextDesign(design)) {
+    session.data.carNumber = undefined;
+  } else {
+    session.data.printLine1 = undefined;
+  }
+}
+
+async function showSizes(ctx: Context, session: DraftSession, design: Design, resetForDesign = true): Promise<void> {
+  session.step = "size";
+  if (resetForDesign) {
+    applyDesignDefaults(session, design);
+  }
 
   const keyboard = new InlineKeyboard();
   for (const size of design.sizes) {
     const price = size.price ? ` · ${size.price} BYN` : "";
     keyboard.text(`${size.label}${price}`, `size:${size.id}`).row();
+  }
+  if (session.editing) {
+    keyboard.text("Назад к проверке", "edit:done").row();
   }
   keyboard.text("Отменить", "cancel");
   await saveAndReply(ctx, session, "Выберите размер.", keyboard);
@@ -108,7 +125,11 @@ async function showElements(ctx: Context, session: DraftSession, design: Design)
     const selected = session.data.elements.includes(element.id) ? "[x]" : "[ ]";
     keyboard.text(`${selected} ${element.label}`, `el:${element.id}`).row();
   }
-  keyboard.text("Далее", "el_done").row().text("Отменить", "cancel");
+  keyboard.text("Далее", "el_done").row();
+  if (session.editing) {
+    keyboard.text("Назад к проверке", "edit:done").row();
+  }
+  keyboard.text("Отменить", "cancel");
   await saveAndReply(ctx, session, "Выберите элементы, которые попадут на брелок.", keyboard);
 }
 
@@ -126,6 +147,9 @@ async function showLoopSide(ctx: Context, session: DraftSession, design: Design)
     const selected = current === loop.id ? "[x]" : "[ ]";
     keyboard.text(`${selected} ${loop.label}`, `loop:${loop.id}`).row();
   }
+  if (session.editing) {
+    keyboard.text("Назад к проверке", "edit:done").row();
+  }
   keyboard.text("Отменить", "cancel");
   await saveAndReply(ctx, session, "Выберите сторону ушка для кольца.", keyboard);
 }
@@ -141,11 +165,6 @@ async function askName(ctx: Context, session: DraftSession): Promise<void> {
   await saveAndReply(ctx, session, "Введите имя для заказа.");
 }
 
-async function askPhone(ctx: Context, session: DraftSession): Promise<void> {
-  session.step = "phone";
-  await saveAndReply(ctx, session, "Введите телефон, например +375291234567 или 375291234567.");
-}
-
 async function askCar(ctx: Context, session: DraftSession): Promise<void> {
   session.step = "car";
   await saveAndReply(ctx, session, "Введите номер авто РБ латиницей, например 1234 AB-7.");
@@ -153,6 +172,7 @@ async function askCar(ctx: Context, session: DraftSession): Promise<void> {
 
 async function showConfirmation(ctx: Context, session: DraftSession, design: Design): Promise<void> {
   session.step = "confirm";
+  session.editing = false;
   await sessions.save(chatId(ctx), session);
 
   const keyboard = new InlineKeyboard()
@@ -179,6 +199,57 @@ async function showConfirmation(ctx: Context, session: DraftSession, design: Des
   }
 
   await ctx.reply(caption, { reply_markup: keyboard });
+}
+
+async function showEditMenu(ctx: Context, session: DraftSession, design: Design): Promise<void> {
+  session.step = "confirm";
+  session.editing = false;
+
+  const keyboard = new InlineKeyboard()
+    .text("Дизайн", "edit:design")
+    .text("Размер", "edit:size")
+    .row();
+
+  if (contentElements(design).length > 0) {
+    keyboard.text("Элементы", "edit:elements").row();
+  }
+  if (loopElements(design).length > 0) {
+    keyboard.text("Ушко", "edit:loop").row();
+  }
+  if (isCustomTextDesign(design)) {
+    keyboard.text("Текст", "edit:print_text").row();
+  }
+
+  keyboard.text("Имя", "edit:name").row();
+
+  if (requiresCarNumber(design, session.data)) {
+    keyboard.text("Номер авто", "edit:car").row();
+  }
+
+  keyboard.text("Назад к проверке", "edit:done").row().text("Отменить", "cancel");
+  await saveAndReply(ctx, session, "Что нужно исправить?", keyboard);
+}
+
+async function finishEditOrContinue(ctx: Context, session: DraftSession, design: Design, next: () => Promise<void>): Promise<void> {
+  if (!session.editing) {
+    await next();
+    return;
+  }
+
+  if (isCustomTextDesign(design)) {
+    const currentText = cleanCustomText(session.data.printLine1 || "");
+    if (!currentText || currentText.length > customTextLimit(design, session.data.sizeId)) {
+      await askPrintText(ctx, session, design);
+      return;
+    }
+  }
+
+  if (requiresCarNumber(design, session.data) && !session.data.carNumber) {
+    await askCar(ctx, session);
+    return;
+  }
+
+  await showConfirmation(ctx, session, design);
 }
 
 async function currentSessionAndDesign(ctx: Context): Promise<{ session: DraftSession; design: Design } | null> {
@@ -222,7 +293,58 @@ bot.callbackQuery("cancel", async (ctx) => {
 
 bot.callbackQuery("edit", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await beginNewOrder(ctx);
+  const current = await currentSessionAndDesign(ctx);
+  if (!current) return;
+  await showEditMenu(ctx, current.session, current.design);
+});
+
+bot.callbackQuery(/^edit:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const current = await currentSessionAndDesign(ctx);
+  if (!current) return;
+
+  const field = ctx.match[1];
+  if (field === "done") {
+    await finishEditOrContinue(ctx, current.session, current.design, async () => {
+      await showConfirmation(ctx, current.session, current.design);
+    });
+    return;
+  }
+
+  current.session.editing = true;
+  if (field === "design") {
+    const designs = await designsOrReply(ctx);
+    if (!designs) return;
+    await showDesignPicker(ctx, current.session, designs, "Выберите правильный дизайн.");
+    return;
+  }
+  if (field === "size") {
+    await showSizes(ctx, current.session, current.design, false);
+    return;
+  }
+  if (field === "elements") {
+    await showElements(ctx, current.session, current.design);
+    return;
+  }
+  if (field === "loop") {
+    await showLoopSide(ctx, current.session, current.design);
+    return;
+  }
+  if (field === "print_text" && isCustomTextDesign(current.design)) {
+    await askPrintText(ctx, current.session, current.design);
+    return;
+  }
+  if (field === "name") {
+    await askName(ctx, current.session);
+    return;
+  }
+  if (field === "car" && requiresCarNumber(current.design, current.session.data)) {
+    await askCar(ctx, current.session);
+    return;
+  }
+
+  current.session.editing = false;
+  await showEditMenu(ctx, current.session, current.design);
 });
 
 bot.callbackQuery(/^design:(.+)$/, async (ctx) => {
@@ -243,7 +365,15 @@ bot.callbackQuery(/^size:(.+)$/, async (ctx) => {
   const current = await currentSessionAndDesign(ctx);
   if (!current) return;
   current.session.data.sizeId = ctx.match[1];
-  current.session.data.elements = [];
+  if (!current.session.editing) {
+    current.session.data.elements = [];
+  }
+  if (current.session.editing) {
+    await finishEditOrContinue(ctx, current.session, current.design, async () => {
+      await showConfirmation(ctx, current.session, current.design);
+    });
+    return;
+  }
   if (isCustomTextDesign(current.design)) {
     await askPrintText(ctx, current.session, current.design);
     return;
@@ -264,8 +394,12 @@ bot.callbackQuery("el_done", async (ctx) => {
   const current = await currentSessionAndDesign(ctx);
   if (!current) return;
   if (current.design.layout === "stacked_plate" && contentElementIds(current.design, current.session.data).length === 0) {
-    await ctx.reply("Выберите хотя бы один блок: имя, авто или телефон.");
+    await ctx.reply("Выберите хотя бы один блок: имя или авто.");
     await showElements(ctx, current.session, current.design);
+    return;
+  }
+  if (current.session.editing) {
+    await showConfirmation(ctx, current.session, current.design);
     return;
   }
   await showLoopSide(ctx, current.session, current.design);
@@ -276,6 +410,10 @@ bot.callbackQuery(/^loop:(.+)$/, async (ctx) => {
   const current = await currentSessionAndDesign(ctx);
   if (!current) return;
   current.session.data = setLoopSide(current.design, current.session.data, ctx.match[1]);
+  if (current.session.editing) {
+    await showConfirmation(ctx, current.session, current.design);
+    return;
+  }
   await askName(ctx, current.session);
 });
 
@@ -317,18 +455,20 @@ bot.on("message:text", async (ctx) => {
       return;
     }
     session.data.printLine1 = cleaned;
+    if (session.editing) {
+      await showConfirmation(ctx, session, current.design);
+      return;
+    }
     await askName(ctx, session);
     return;
   }
 
   if (session.step === "name") {
     session.data.customerName = text;
-    await askPhone(ctx, session);
-    return;
-  }
-
-  if (session.step === "phone") {
-    session.data.phone = cleanPhone(text);
+    if (session.editing) {
+      await showConfirmation(ctx, session, current.design);
+      return;
+    }
     if (requiresCarNumber(current.design, session.data)) {
       await askCar(ctx, session);
     } else {

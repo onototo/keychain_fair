@@ -19,7 +19,7 @@ from .validation import normalize_by_car_number, split_by_car_number
 
 
 MAX_UNPAID_ORDERS_PER_USER = 2
-CONTENT_SHAPES = {"name", "car", "phone"}
+CONTENT_SHAPES = {"name", "car"}
 LOOP_SHAPES = {"loop_left", "loop_right"}
 
 
@@ -160,7 +160,6 @@ class OrderService:
         if contains_profanity(
             payload.customer_name,
             payload.car_number,
-            payload.phone,
             payload.print_line_1,
             payload.print_line_2,
         ):
@@ -259,7 +258,7 @@ class OrderService:
         selected_content = {item.get("shape") for item in selection.elements if item.get("shape") in CONTENT_SHAPES}
         selected_loop_sides = [item.get("shape") for item in selection.elements if item.get("shape") in LOOP_SHAPES]
         if not selected_content:
-            raise DesignCatalogError("Выберите хотя бы один блок для печати: имя, номер авто или телефон")
+            raise DesignCatalogError("Выберите хотя бы один блок для печати: имя или номер авто")
         if "car" in selected_content and not payload.car_number:
             raise DesignCatalogError("Укажите номер авто или снимите галочку с блока номера")
         if len(selected_loop_sides) > 1:

@@ -28,7 +28,7 @@ from . import statuses
 from .editor import final_dimensions_mm
 
 
-CONTENT_SHAPES = {"name", "car", "phone"}
+CONTENT_SHAPES = {"name", "car"}
 DEFAULT_MODEL_SCALE = 1.0
 
 metadata = MetaData()
@@ -304,7 +304,7 @@ class Database:
             "idempotency_key": idempotency_key,
             "customer_name": payload["customer_name"],
             "car_number": payload["car_number"],
-            "phone": payload["phone"],
+            "phone": payload.get("phone", ""),
             "print_line_1": payload.get("print_line_1", ""),
             "print_line_2": payload.get("print_line_2", ""),
             "design_id": design["id"],
@@ -780,7 +780,6 @@ class Database:
                     print_batch_items.c.position_y_mm,
                     orders.c.customer_name,
                     orders.c.car_number,
-                    orders.c.phone,
                     orders.c.status,
                     orders.c.design_name,
                     orders.c.size_label,

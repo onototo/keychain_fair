@@ -32,7 +32,7 @@ STACKED_OVERLAP_INDEX = 25
 DEFAULT_SAMPLE_TEXT = {
     "customer_name": "Nikita",
     "car_number": "1234AB7",
-    "phone": "375291234567",
+    "print_line_2": "",
 }
 
 
@@ -372,7 +372,7 @@ def preview_order_payload(
             print_line_1 = "1234 AB-7"
     elif mode == "custom_text":
         print_line_1 = str(sample_text.get("print_line_1") if isinstance(sample_text, dict) and sample_text.get("print_line_1") else sample["car_number"])
-        print_line_2 = str(sample_text.get("print_line_2") if isinstance(sample_text, dict) and sample_text.get("print_line_2") else sample["phone"])
+        print_line_2 = str(sample_text.get("print_line_2") if isinstance(sample_text, dict) and sample_text.get("print_line_2") else sample["print_line_2"])
 
     width, height = final_dimensions_mm(design, params, selected)
     car_block = params.get("text_blocks", {}).get("car", {}) if isinstance(params.get("text_blocks"), dict) else {}
@@ -380,7 +380,7 @@ def preview_order_payload(
         "id": f"preview_{uuid.uuid4().hex[:12]}",
         "customer_name": sample["customer_name"],
         "car_number": sample["car_number"],
-        "phone": sample["phone"],
+        "phone": "",
         "print_line_1": print_line_1,
         "print_line_2": print_line_2,
         "design_id": design["id"],

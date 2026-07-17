@@ -219,7 +219,6 @@ def test_openscad_model_scale_keeps_z_thickness(tmp_path, monkeypatch):
         "size_id": "large",
         "customer_name": "Nikita",
         "car_number": "A123BC77",
-        "phone": "375291234567",
         "selected_elements": [{"id": "car", "shape": "car"}],
         "width_mm": 79.2,
         "height_mm": 18.0,
@@ -279,12 +278,14 @@ def test_octoprint_connect_uses_configured_payload(tmp_path, monkeypatch):
         posted.append((url, kwargs))
         return Response()
 
+    states = ["Closed", "Operational"]
+
+    def fake_get_connection():
+        state = states.pop(0)
+        return AdapterResult(True, "fake connection", extra={"current": {"state": state}})
+
     monkeypatch.setattr(controller, "ensure_server_running", lambda: AdapterResult(True, "fake server"))
-    monkeypatch.setattr(
-        controller,
-        "get_connection",
-        lambda: AdapterResult(True, "fake connection", extra={"current": {"state": "Operational"}}),
-    )
+    monkeypatch.setattr(controller, "get_connection", fake_get_connection)
     monkeypatch.setattr("keychain_fair.adapters.httpx.post", fake_post)
 
     result = controller.connect()
@@ -301,7 +302,6 @@ def test_octoprint_connect_uses_configured_payload(tmp_path, monkeypatch):
                     "baudrate": 250000,
                     "printerProfile": "_default",
                     "save": True,
-                    "autoconnect": True,
                 },
                 "timeout": 5,
             },
@@ -309,7 +309,67 @@ def test_octoprint_connect_uses_configured_payload(tmp_path, monkeypatch):
     ]
 
 
-def test_octoprint_ensure_connected_reports_closed_without_autoconnect(tmp_path, monkeypatch):
+def test_octoprint_connect_uses_detected_port_when_configured_port_is_unavailable(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    controller = OctoPrintController(settings)
+    posted = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **kwargs):
+        posted.append((url, kwargs))
+        return Response()
+
+    states = [
+        {
+            "current": {"state": "Closed"},
+            "options": {
+                "ports": ["AUTO", "COM5"],
+                "baudrates": [0, 115200, 250000],
+                "printerProfiles": [{"id": "_default", "name": "Default"}],
+            },
+        },
+        {"current": {"state": "Operational"}},
+    ]
+
+    def fake_get_connection():
+        return AdapterResult(True, "fake connection", extra=states.pop(0))
+
+    monkeypatch.setattr(controller, "ensure_server_running", lambda: AdapterResult(True, "fake server"))
+    monkeypatch.setattr(controller, "get_connection", fake_get_connection)
+    monkeypatch.setattr("keychain_fair.adapters.httpx.post", fake_post)
+
+    result = controller.connect()
+
+    assert result.success is True
+    assert posted[0][1]["json"]["port"] == "COM5"
+    assert posted[0][1]["json"]["baudrate"] == 250000
+
+
+def test_octoprint_connect_skips_post_when_already_connected(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    controller = OctoPrintController(settings)
+
+    def fail_post(*args, **kwargs):
+        raise AssertionError("already connected printer must not reconnect")
+
+    monkeypatch.setattr(controller, "ensure_server_running", lambda: AdapterResult(True, "fake server"))
+    monkeypatch.setattr(
+        controller,
+        "get_connection",
+        lambda: AdapterResult(True, "fake connection", extra={"current": {"state": "Operational"}}),
+    )
+    monkeypatch.setattr("keychain_fair.adapters.httpx.post", fail_post)
+
+    result = controller.connect()
+
+    assert result.success is True
+    assert result.message == "OctoPrint connected: Operational"
+
+
+def test_octoprint_ensure_connected_reports_closed_without_connect_request(tmp_path, monkeypatch):
     settings = make_settings(tmp_path, octoprint_enabled=True)
     controller = OctoPrintController(settings)
 
@@ -382,7 +442,7 @@ def test_octoprint_server_autostart_for_local_base_url(tmp_path, monkeypatch):
     assert command[1] == "serve"
 
 
-def test_octoprint_reachable_uses_web_root_and_accepts_auth_status(tmp_path, monkeypatch):
+def test_octoprint_reachable_uses_api_version_and_accepts_auth_status(tmp_path, monkeypatch):
     settings = make_settings(tmp_path, octoprint_enabled=True)
     controller = OctoPrintController(settings)
     calls = []
@@ -397,4 +457,16 @@ def test_octoprint_reachable_uses_web_root_and_accepts_auth_status(tmp_path, mon
     monkeypatch.setattr("keychain_fair.adapters.httpx.get", fake_get)
 
     assert controller._octoprint_reachable() is True
-    assert calls == [(settings.octoprint.base_url, {"timeout": 1, "follow_redirects": True})]
+    assert calls == [(f"{settings.octoprint.base_url}/api/version", {"timeout": 1, "follow_redirects": True})]
+
+
+def test_octoprint_reachable_rejects_missing_api(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, octoprint_enabled=True)
+    controller = OctoPrintController(settings)
+
+    class Response:
+        status_code = 404
+
+    monkeypatch.setattr("keychain_fair.adapters.httpx.get", lambda *args, **kwargs: Response())
+
+    assert controller._octoprint_reachable() is False

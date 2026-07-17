@@ -101,7 +101,6 @@ function orderCard(order) {
     <div class="cashier-order-time">${formatTime(order.created_at)}</div>
     <div class="cashier-order-main">
       <h2>${escapeHtml(order.customer_name)}</h2>
-      <a href="tel:${escapeHtml(order.phone)}">${escapeHtml(order.phone)}</a>
       <div>${escapeHtml(order.car_number || "Без номера авто")}</div>
       <div class="muted">${escapeHtml(order.design_name)} · ${escapeHtml(order.size_label)}</div>
     </div>

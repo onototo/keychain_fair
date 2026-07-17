@@ -149,7 +149,6 @@ def make_settings(
             baudrate=250000,
             printer_profile="_default",
             save_connection=True,
-            autoconnect=True,
         ),
         printer_control=PrinterControlSettings(bed_preheat_c=60),
         worker_poll_seconds=3600,
@@ -211,7 +210,6 @@ def order_payload(
     *,
     customer_name: str = "Anna",
     car_number: str = "1234 AB-7",
-    phone: str = "375291234567",
     design_id: str = "classic_plate",
     size_id: str = "standard",
     elements: list[str] | None = None,
@@ -223,7 +221,6 @@ def order_payload(
     payload = {
         "customer_name": customer_name,
         "car_number": car_number,
-        "phone": phone,
         "design_id": design_id,
         "size_id": size_id,
         "elements": [] if elements is None else elements,

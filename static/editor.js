@@ -28,7 +28,7 @@ const canvas = document.querySelector("#modelCanvas");
 const sampleInputs = {
   customer_name: document.querySelector("#sampleName"),
   car_number: document.querySelector("#sampleCar"),
-  phone: document.querySelector("#samplePhone"),
+  print_line_2: document.querySelector("#sampleLine2"),
 };
 
 const baseInputs = {
@@ -361,9 +361,8 @@ function sampleText() {
   return {
     customer_name: sampleInputs.customer_name.value || "Nikita",
     car_number: sampleInputs.car_number.value || "1234AB7",
-    phone: sampleInputs.phone.value || "375291234567",
     print_line_1: sampleInputs.car_number.value || "1234AB7",
-    print_line_2: sampleInputs.phone.value || "",
+    print_line_2: sampleInputs.print_line_2.value || "",
   };
 }
 

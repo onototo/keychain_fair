@@ -79,13 +79,12 @@ export function requiresCarNumber(design: Design, data: DraftData): boolean {
 }
 
 export function buildOrderPayload(data: DraftData, draftId: string, user: TelegramUserMeta): OrderPayload {
-  if (!data.designId || !data.sizeId || !data.customerName || !data.phone) {
+  if (!data.designId || !data.sizeId || !data.customerName) {
     throw new Error("Order draft is incomplete");
   }
   return {
     customer_name: data.customerName,
     car_number: data.carNumber || "",
-    phone: data.phone,
     design_id: data.designId,
     size_id: data.sizeId,
     elements: [],
@@ -110,6 +109,6 @@ export function orderSummary(design: Design, data: DraftData): string {
     `Дизайн: ${design.name}`,
     `Размер: ${size?.label || data.sizeId}`,
     `Имя: ${data.customerName || ""}`,
-    `Телефон: ${data.phone || ""}${car}${custom}${price}`,
+    `${car || custom || price ? `${car}${custom}${price}`.trimStart() : "Авто: -"}`,
   ].join("\n");
 }

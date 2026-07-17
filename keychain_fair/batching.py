@@ -62,7 +62,6 @@ def write_batch_manifest(batch_id: str, layout_items: list[dict[str, Any]], targ
                 "order_id": item["order"]["id"],
                 "customer_name": item["order"]["customer_name"],
                 "car_number": item["order"]["car_number"],
-                "phone": item["order"]["phone"],
                 "stl_path": item["order"]["stl_path"],
                 "x_mm": item["x_mm"],
                 "y_mm": item["y_mm"],

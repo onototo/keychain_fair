@@ -37,17 +37,17 @@ export type DraftData = {
   sizeId?: string;
   elements: string[];
   customerName?: string;
-  phone?: string;
   carNumber?: string;
   printLine1?: string;
 };
 
-export type DraftStep = "design" | "size" | "elements" | "loop" | "print_text" | "name" | "phone" | "car" | "confirm";
+export type DraftStep = "design" | "size" | "elements" | "loop" | "print_text" | "name" | "car" | "confirm";
 
 export type DraftSession = {
   draftId: string;
   step: DraftStep;
   data: DraftData;
+  editing?: boolean;
 };
 
 export type TelegramUserMeta = {
@@ -59,7 +59,6 @@ export type TelegramUserMeta = {
 export type OrderPayload = {
   customer_name: string;
   car_number: string;
-  phone: string;
   design_id: string;
   size_id: string;
   elements: string[];

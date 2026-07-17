@@ -62,10 +62,11 @@ cura_engine:
       G1 X0 Y220 F3000
       M84
     adhesion_type: brim
+    brim_width: 2.8
     layer_height: 0.2
     layer_height_0: 0.1
     line_width: 0.4
-    material_flow_layer_0: 118
+    material_flow_layer_0: 130
     wall_line_width: 0.4
     wall_line_count: 2
     wall_thickness: 0.8
@@ -152,7 +153,7 @@ cura_engine:
     retraction_speed: 45
     retraction_retract_speed: 45
     retraction_prime_speed: 45
-    retraction_hop: 0.4
+    retraction_hop: 1.4
     retraction_hop_enabled: true
     retraction_hop_only_when_collides: true
     retraction_combing: all

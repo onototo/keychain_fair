@@ -81,7 +81,6 @@ class OctoPrintSettings:
     baudrate: int
     printer_profile: str
     save_connection: bool
-    autoconnect: bool
 
 
 @dataclass(frozen=True)
@@ -183,7 +182,6 @@ def load_settings(base_dir: Path | None = None) -> AppSettings:
             baudrate=_env_int("OCTOPRINT_BAUDRATE", int(octoprint.get("baudrate", 250000))),
             printer_profile=str(os.environ.get("OCTOPRINT_PRINTER_PROFILE") or octoprint.get("printer_profile", "_default")),
             save_connection=_env_bool("OCTOPRINT_SAVE_CONNECTION", bool(octoprint.get("save_connection", True))),
-            autoconnect=_env_bool("OCTOPRINT_AUTOCONNECT", bool(octoprint.get("autoconnect", True))),
         ),
         printer_control=PrinterControlSettings(
             bed_preheat_c=int(printer_control.get("bed_preheat_c", 60)),

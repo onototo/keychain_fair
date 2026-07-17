@@ -77,7 +77,7 @@ def _print_lines(order: dict[str, Any]) -> tuple[str, str]:
     second = str(order.get("print_line_2") or "").strip()
     if first or second:
         return first, second
-    return str(order.get("car_number") or ""), str(order.get("phone") or "")
+    return str(order.get("car_number") or ""), ""
 
 
 def _font_size_from_params(params: dict[str, Any], fallback: float) -> float:
@@ -623,8 +623,12 @@ class OctoPrintController:
 
     def _octoprint_reachable(self) -> bool:
         try:
-            response = httpx.get(self.settings.octoprint.base_url, timeout=1, follow_redirects=True)
-            return response.status_code < 500
+            response = httpx.get(
+                f"{self.settings.octoprint.base_url}/api/version",
+                timeout=1,
+                follow_redirects=True,
+            )
+            return response.status_code < 500 and response.status_code != 404
         except Exception:
             return False
 
@@ -686,14 +690,75 @@ class OctoPrintController:
         normalized = state.strip().lower()
         return any(word in normalized for word in ["opening", "connecting", "detecting"])
 
-    def _configured_connection_payload(self) -> dict[str, Any]:
+    @staticmethod
+    def _connection_options(connection_data: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(connection_data, dict):
+            return {}
+        options = connection_data.get("options")
+        return options if isinstance(options, dict) else {}
+
+    def _connection_port(self, options: dict[str, Any]) -> str:
+        configured = self.settings.octoprint.printer_port
+        ports = options.get("ports")
+        if not isinstance(ports, list) or not ports:
+            return configured
+
+        normalized_ports = [str(port) for port in ports if port not in ("", None)]
+        if configured in normalized_ports:
+            return configured
+
+        real_ports = [port for port in normalized_ports if port.upper() != "AUTO"]
+        if len(real_ports) == 1:
+            return real_ports[0]
+        if "AUTO" in [port.upper() for port in normalized_ports]:
+            return "AUTO"
+        return configured
+
+    def _connection_baudrate(self, options: dict[str, Any]) -> int:
+        configured = self.settings.octoprint.baudrate
+        baudrates = options.get("baudrates")
+        if not isinstance(baudrates, list) or not baudrates:
+            return configured
+
+        normalized_baudrates = []
+        for baudrate in baudrates:
+            try:
+                normalized_baudrates.append(int(baudrate))
+            except (TypeError, ValueError):
+                continue
+        if configured in normalized_baudrates:
+            return configured
+        if 0 in normalized_baudrates:
+            return 0
+        return normalized_baudrates[0] if normalized_baudrates else configured
+
+    def _connection_printer_profile(self, options: dict[str, Any]) -> str:
+        configured = self.settings.octoprint.printer_profile
+        profiles = options.get("printerProfiles")
+        if not isinstance(profiles, list) or not profiles:
+            return configured
+
+        profile_ids = []
+        for profile in profiles:
+            if isinstance(profile, dict) and profile.get("id"):
+                profile_ids.append(str(profile["id"]))
+            elif isinstance(profile, str):
+                profile_ids.append(profile)
+
+        if configured in profile_ids:
+            return configured
+        if "_default" in profile_ids:
+            return "_default"
+        return profile_ids[0] if profile_ids else configured
+
+    def _configured_connection_payload(self, connection_data: dict[str, Any] | None = None) -> dict[str, Any]:
+        options = self._connection_options(connection_data)
         payload: dict[str, Any] = {
             "command": "connect",
-            "port": self.settings.octoprint.printer_port,
-            "baudrate": self.settings.octoprint.baudrate,
-            "printerProfile": self.settings.octoprint.printer_profile,
+            "port": self._connection_port(options),
+            "baudrate": self._connection_baudrate(options),
+            "printerProfile": self._connection_printer_profile(options),
             "save": self.settings.octoprint.save_connection,
-            "autoconnect": self.settings.octoprint.autoconnect,
         }
         return {key: value for key, value in payload.items() if value not in ("", None)}
 
@@ -722,7 +787,13 @@ class OctoPrintController:
         if not server.success:
             return server
 
-        payload = self._configured_connection_payload()
+        current = self.get_connection()
+        if current.success and isinstance(current.extra, dict):
+            state = self._connection_state(current.extra)
+            if self._is_connected_state(state):
+                return AdapterResult(True, f"OctoPrint connected: {state}", extra={"connection": current.extra})
+
+        payload = self._configured_connection_payload(current.extra if isinstance(current.extra, dict) else None)
         try:
             response = httpx.post(
                 f"{self.settings.octoprint.base_url}/api/connection",
@@ -733,12 +804,17 @@ class OctoPrintController:
             response.raise_for_status()
         except Exception as exc:  # pragma: no cover - integration path
             return AdapterResult(False, f"OctoPrint connect failed: {exc}", extra={"payload": payload})
-        wait_result = self._wait_for_connected(wait_seconds=30.0)
+        wait_result = self._wait_for_connected(wait_seconds=30.0, fail_on_stable_state=False)
         if wait_result.success:
             return AdapterResult(True, wait_result.message, extra={"payload": payload, "connection": wait_result.extra})
         return AdapterResult(False, wait_result.message, extra={"payload": payload, "connection": wait_result.extra})
 
-    def _wait_for_connected(self, wait_seconds: float = 8.0, poll_seconds: float = 0.5) -> AdapterResult:
+    def _wait_for_connected(
+        self,
+        wait_seconds: float = 8.0,
+        poll_seconds: float = 0.5,
+        fail_on_stable_state: bool = True,
+    ) -> AdapterResult:
         deadline = time.monotonic() + max(0.1, wait_seconds)
         last_message = ""
         last_extra: dict[str, Any] | None = None
@@ -750,7 +826,7 @@ class OctoPrintController:
                 if self._is_connected_state(state):
                     return AdapterResult(True, f"OctoPrint connected: {state}", extra=probe.extra)
                 last_message = f"OctoPrint state is {state or 'unknown'}"
-                if state and not self._is_transient_connection_state(state):
+                if fail_on_stable_state and state and not self._is_transient_connection_state(state):
                     return AdapterResult(False, last_message, extra=probe.extra)
             else:
                 last_message = probe.message

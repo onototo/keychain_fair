@@ -15,7 +15,6 @@ const previewImage = document.querySelector("#previewImage");
 const designName = document.querySelector("#designName");
 const customerNameInput = form.elements.customer_name;
 const carNumberInput = form.elements.car_number;
-const phoneInput = form.elements.phone;
 const printLine1Input = form.elements.print_line_1;
 const printLine2Input = form.elements.print_line_2;
 const carNumberField = document.querySelector("#carNumberField");
@@ -29,7 +28,6 @@ const NAME_BLOCKED_RE = /[^A-Za-zА-Яа-яЁёІіЇїЄєЎўҐґ ]/g;
 const BY_CAR_RE = /^[0-9]{4}[ABCEHIKMOPTX]{2}[1-7]$/;
 const BY_CAR_DISPLAY_RE = /^[0-9]{4}\s[ABCEHIKMOPTX]{2}-[1-7]$/;
 const CAR_BLOCKED_RE = /[^0-9A-Za-z]/g;
-const PHONE_RE = /^\+?(79[0-9]{9}|89[0-9]{9}|375(25|29|33|44)[0-9]{7})$/;
 
 function selectedDesign() {
   return state.designs.find((item) => item.id === state.selectedDesignId) || state.designs[0];
@@ -130,16 +128,9 @@ function sanitizePrintLine(value) {
     .slice(0, customTextLimits().max_total_chars || 48);
 }
 
-function sanitizePhone(value) {
-  const cleaned = String(value).replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
-  const normalized = cleaned.startsWith("+") ? `+${cleaned.slice(1).replace(/\D/g, "")}` : cleaned.replace(/\D/g, "");
-  return normalized.slice(0, 13);
-}
-
 function sanitizeFields() {
   customerNameInput.value = sanitizeName(customerNameInput.value);
   carNumberInput.value = sanitizeCarNumber(carNumberInput.value);
-  phoneInput.value = sanitizePhone(phoneInput.value);
   printLine1Input.value = sanitizePrintLine(printLine1Input.value);
   printLine2Input.value = sanitizePrintLine(printLine2Input.value);
 }
@@ -149,7 +140,6 @@ function validateFields() {
   const custom = isCustomDesign(design);
   const name = customerNameInput.value.trim();
   const carNumber = carNumberInput.value.trim();
-  const phone = phoneInput.value.trim();
   const printLine1 = printLine1Input.value.trim();
   const printLine2 = printLine2Input.value.trim();
   const limits = customTextLimits(design, selectedSize(design));
@@ -178,7 +168,6 @@ function validateFields() {
       ? ""
       : "Номер авто: РБ 1234 AB-7",
   );
-  phoneInput.setCustomValidity(!phone || PHONE_RE.test(phone) ? "" : "Телефон: цифры и необязательный +, мобильный РБ или РФ");
   printLine1Input.setCustomValidity(
     custom && !printLine1 && !printLine2
       ? "Введите текст для печати"
@@ -257,7 +246,6 @@ form.addEventListener("input", (event) => {
   if (
     event.target === customerNameInput ||
     event.target === carNumberInput ||
-    event.target === phoneInput ||
     event.target === printLine1Input ||
     event.target === printLine2Input
   ) {
@@ -290,7 +278,6 @@ form.addEventListener("submit", async (event) => {
   const payload = {
     customer_name: String(data.get("customer_name") || ""),
     car_number: String(data.get("car_number") || ""),
-    phone: String(data.get("phone") || ""),
     design_id: state.selectedDesignId,
     size_id: String(data.get("size_id") || ""),
     elements: [],

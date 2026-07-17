@@ -41,4 +41,3 @@ octoprint:
   baudrate: 250000
   printer_profile: _default
   save_connection: true
-  autoconnect: true

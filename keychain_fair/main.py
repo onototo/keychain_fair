@@ -44,11 +44,18 @@ def _public_order(order: dict[str, Any]) -> dict[str, Any]:
         "batch_id",
         "model_params",
         "client_id",
+        "phone",
         "telegram_chat_id",
         "telegram_user_id",
         "telegram_username",
     ]:
         public.pop(key, None)
+    return public
+
+
+def _operator_order(order: dict[str, Any]) -> dict[str, Any]:
+    public = dict(order)
+    public.pop("phone", None)
     return public
 
 
@@ -384,6 +391,10 @@ def create_app(
     def editor_page() -> FileResponse:
         return FileResponse(static_dir / "editor.html")
 
+    @app.get("/admin/orders/{order_id}/3d")
+    def admin_order_preview_page(order_id: str) -> FileResponse:
+        return FileResponse(static_dir / "order-preview.html")
+
     @app.get("/status/{order_id}")
     def status_page(order_id: str) -> FileResponse:
         return FileResponse(static_dir / "status.html")
@@ -436,7 +447,7 @@ def create_app(
 
     @app.get("/api/admin/orders", dependencies=[Depends(require_admin)])
     def admin_orders(status: str | None = None) -> dict[str, Any]:
-        return {"orders": database.list_orders(status)}
+        return {"orders": [_operator_order(order) for order in database.list_orders(status)]}
 
     @app.get("/api/admin/statistics.xlsx", dependencies=[Depends(require_admin)])
     def admin_statistics_xlsx() -> Response:
@@ -449,7 +460,7 @@ def create_app(
 
     @app.get("/api/cashier/orders", dependencies=[Depends(require_cashier)])
     def cashier_orders() -> dict[str, Any]:
-        return {"orders": [_order_with_catalog_price(order, catalog) for order in database.list_orders()]}
+        return {"orders": [_operator_order(_order_with_catalog_price(order, catalog)) for order in database.list_orders()]}
 
     @app.post("/api/cashier/orders/{order_id}/payment", dependencies=[Depends(require_cashier)])
     def cashier_set_payment(order_id: str, payload: PaymentStatusUpdate) -> dict[str, Any]:
@@ -459,7 +470,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Order not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"order": order}
+        return {"order": _operator_order(order)}
 
     @app.post("/api/admin/orders/{order_id}/status", dependencies=[Depends(require_admin)])
     def admin_set_status(order_id: str, payload: StatusUpdate) -> dict[str, Any]:
@@ -469,7 +480,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Order not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"order": order}
+        return {"order": _operator_order(order)}
 
     @app.delete("/api/admin/orders/{order_id}", dependencies=[Depends(require_admin)])
     def admin_delete_order(order_id: str) -> dict[str, Any]:
@@ -479,7 +490,48 @@ def create_app(
             raise HTTPException(status_code=404, detail="Order not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"order": order}
+        return {"order": _operator_order(order)}
+
+    @app.post("/api/admin/orders/{order_id}/preview-3d", dependencies=[Depends(require_admin)])
+    def admin_order_preview_3d(order_id: str) -> dict[str, Any]:
+        try:
+            order = database.get_order(order_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Order not found") from exc
+
+        try:
+            design = catalog.get_design(str(order.get("design_id") or ""))
+        except DesignCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        params = order.get("model_params")
+        if not isinstance(params, dict):
+            raise HTTPException(status_code=409, detail="Order has no saved model parameters")
+
+        preview_id = f"prv_order_{uuid.uuid4().hex[:16]}"
+        preview_order = dict(order)
+        preview_order["id"] = preview_id
+        result = model_generator.generate_preview_stl(preview_id, preview_order, design)
+        if not result.success or not result.output_path:
+            raise HTTPException(status_code=503, detail=result.message)
+
+        return {
+            "preview_id": preview_id,
+            "bounds": bounds_for_params(design, params, order["selected_elements"]),
+            "filament_change_height_mm": params.get("thickness_mm", order["thickness_mm"]),
+            "stl_url": f"/api/admin/model-editor/previews/{preview_id}.stl",
+            "order": {
+                "id": order["id"],
+                "customer_name": order["customer_name"],
+                "car_number": order["car_number"],
+                "print_line_1": order["print_line_1"],
+                "print_line_2": order["print_line_2"],
+                "design_name": order["design_name"],
+                "size_label": order["size_label"],
+                "status": order["status"],
+                "status_label": order.get("status_label", order["status"]),
+            },
+        }
 
     @app.post("/api/admin/print-queue/prepare", dependencies=[Depends(require_admin)])
     def admin_prepare_queue() -> dict[str, Any]:

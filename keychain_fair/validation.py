@@ -4,8 +4,6 @@ import unicodedata
 
 BY_CAR_LETTERS = "ABCEHIKMOPTX"
 BY_CAR_RE = re.compile(rf"^\d{{4}}[{BY_CAR_LETTERS}]{{2}}[1-7]$")
-RU_MOBILE_RE = re.compile(r"^[78]9\d{9}$")
-BY_MOBILE_RE = re.compile(r"^375(25|29|33|44)\d{7}$")
 
 
 def _is_name_character(char: str) -> bool:
@@ -15,17 +13,6 @@ def _is_name_character(char: str) -> bool:
         return False
     name = unicodedata.name(char, "")
     return "LATIN" in name or "CYRILLIC" in name
-
-
-def normalize_phone(value: str) -> str:
-    phone = value.strip()
-    if phone.startswith("+"):
-        phone = phone[1:]
-    if not phone.isdigit():
-        raise ValueError("Phone may contain only digits and an optional leading +")
-    if not (RU_MOBILE_RE.match(phone) or BY_MOBILE_RE.match(phone)):
-        raise ValueError("Phone must be a BY or RU mobile number")
-    return phone
 
 
 def normalize_car_number(value: str) -> str:

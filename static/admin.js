@@ -231,13 +231,13 @@ async function refreshOrders({ force = false } = {}) {
       <td>${sourceLabel(order)}</td>
       <td>${formatDate(order.created_at)}</td>
       <td>${order.customer_name}</td>
-      <td>${order.phone}</td>
       <td>${order.car_number}</td>
       <td>${order.design_name} · ${order.size_label}</td>
       <td><select data-order="${order.id}">${options}</select></td>
       <td>
         <div class="row-actions">
           <a class="small muted" href="/status/${order.id}" target="_blank">Статус</a>
+          <a class="small muted" href="/admin/orders/${order.id}/3d" target="_blank" rel="noopener">3D</a>
           <button class="danger small-button" data-delete="${order.id}" ${order.status === "printing" ? "disabled" : ""}>Удалить</button>
         </div>
       </td>
@@ -409,9 +409,9 @@ async function refreshSystemInfo() {
   const response = await fetch("/api/system/info");
   const result = await response.json();
   const qr = result.qr || {};
-  document.querySelector("#wifiQr").src = qr.wifi || result.wifi_qr || "";
-  document.querySelector("#orderQr").src = qr.order || result.site_qr || "";
-  document.querySelector("#adminQr").src = qr.admin || result.admin_qr || "";
+  document.querySelector("#wifiQr").src = result.wifi_qr || qr.wifi || "";
+  document.querySelector("#orderQr").src = result.site_qr || qr.order || "";
+  document.querySelector("#adminQr").src = result.admin_qr || qr.admin || "";
   document.querySelector("#wifiSsid").textContent = result.wifi_ssid ? `SSID: ${result.wifi_ssid}` : "";
   document.querySelector("#siteUrl").textContent = result.site_url;
   document.querySelector("#adminUrl").textContent = result.admin_url;
