@@ -50,6 +50,7 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
     bottom_height = block_param_pos(editor_params, "phone", 3, body_size * 0.24);
     bottom_font = block_param_pos(editor_params, "phone", 4, font_size * 0.72);
     bottom_relief = block_param_pos(editor_params, "phone", 5, relief_height);
+    outline_height = max(top_relief, bottom_relief);
 
     color(PREVIEW_BASE_COLOR)
         difference() {
@@ -61,7 +62,7 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
 
     color(PREVIEW_RELIEF_COLOR)
         translate([0, 0, body_thickness])
-            border(body_size, radius, 1.1, min(0.32, relief_height));
+            border(body_size, radius, 1.1, outline_height);
 
     color(PREVIEW_RELIEF_COLOR)
         translate([hole_x, hole_y, body_thickness])

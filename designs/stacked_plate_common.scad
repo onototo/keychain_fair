@@ -41,6 +41,17 @@ function block_start(kind) = kind == "name" ? 7 : kind == "car" ? 13 : 19;
 function block_param(params, kind, offset, fallback) = ep(params, block_start(kind) + offset, fallback);
 function block_param_pos(params, kind, offset, fallback) =
     block_param(params, kind, offset, fallback) > 0 ? block_param(params, kind, offset, fallback) : fallback;
+function block_relief(params, kind, fallback) = block_param_pos(params, kind, 5, fallback);
+function selected_text_relief(params, values, fallback) =
+    (contains(values, "name") || contains(values, "car") || contains(values, "phone")) ?
+        max(
+            max(
+                contains(values, "name") ? block_relief(params, "name", fallback) : 0,
+                contains(values, "car") ? block_relief(params, "car", fallback) : 0
+            ),
+            contains(values, "phone") ? block_relief(params, "phone", fallback) : 0
+        ) :
+        fallback;
 PREVIEW_BASE_COLOR = "#2f7f77";
 PREVIEW_RELIEF_COLOR = "#f0b429";
 
@@ -128,7 +139,7 @@ module raised_text(kind, x, y, width, height, customer_name, car_number, phone_n
     size_by_width = box_width / max(1, len(label)) * text_width_factor(kind);
     fitted_size = min(block_font_size, min(box_height * text_height_factor(kind), size_by_width));
     thicken = kind == "car" ? 0.08 : 0.045;
-    text_height = block_param_pos(editor_params, kind, 5, ep(editor_params, 3, 0.8));
+    text_height = block_relief(editor_params, kind, ep(editor_params, 3, 0.8));
 
     translate([x + width / 2 + block_param(editor_params, kind, 0, 0), y + height / 2 + block_param(editor_params, kind, 1, 0), top_z])
         linear_extrude(height = text_height)
@@ -189,6 +200,8 @@ module stacked_plate_keychain(customer_name, car_number, phone_number, selected_
     center_y = count == 3 ? side_height - overlap : 0;
     plate_z = ep(editor_params, 2, plate_thickness);
     relief_height = ep(editor_params, 3, 0.8);
+    outline_height = selected_text_relief(editor_params, selected_elements, relief_height);
+    outline_cap_height = (style == "frame" || style == "layered") ? min(0.14, outline_height) : 0;
     hole_radius = ep_pos(editor_params, 6, max(1.95, center_height * 0.10));
     loop_outer = max(3.7, center_height * 0.19);
     loop_space = loop_outer * 2.05;
@@ -209,12 +222,12 @@ module stacked_plate_keychain(customer_name, car_number, phone_number, selected_
 
             color(PREVIEW_RELIEF_COLOR)
                 translate([body_x, 0, plate_z])
-                    raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, border_width, min(0.34, relief_height));
+                    raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, border_width, outline_height);
 
             if (style == "frame" || style == "layered") {
                 color(PREVIEW_RELIEF_COLOR)
-                    translate([body_x, 0, plate_z + min(0.34, relief_height)])
-                        raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, 2.25, min(0.14, relief_height));
+                    translate([body_x, 0, plate_z + max(0, outline_height - outline_cap_height)])
+                        raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, 2.25, outline_cap_height);
             }
 
             color(PREVIEW_RELIEF_COLOR)

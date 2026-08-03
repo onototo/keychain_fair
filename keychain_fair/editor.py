@@ -131,6 +131,22 @@ def final_dimensions_mm(
     return width, base_height
 
 
+def relief_height_for_params(
+    params: dict[str, Any],
+    selected_elements: list[dict[str, Any]] | list[str] | None = None,
+) -> float:
+    fallback = _float(params.get("relief_height_mm"), DEFAULT_RELIEF_HEIGHT_MM)
+    blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
+    selected_shapes = set(_selected_shapes(selected_elements or []))
+    keys = [key for key in TEXT_BLOCK_KEYS if not selected_shapes or key in selected_shapes]
+
+    relief = fallback
+    for key in keys:
+        block = blocks.get(key) if isinstance(blocks.get(key), dict) else {}
+        relief = max(relief, _float(block.get("relief_height_mm"), fallback))
+    return relief
+
+
 def _default_text_blocks(design: dict[str, Any], base_width: float, base_height: float, font_size: float) -> dict[str, dict[str, float]]:
     relief = DEFAULT_RELIEF_HEIGHT_MM
     if is_stacked_design(design):
@@ -468,11 +484,13 @@ def designs_for_editor(designs: list[dict[str, Any]], base_height_mm: float = DE
         item = deepcopy(design)
         for size in item.get("sizes", []):
             size["editor_params"] = default_editor_params(item, size, base_height_mm)
-            width, height = final_dimensions_mm(item, size["editor_params"], _default_preview_elements(item))
+            preview_elements = _default_preview_elements(item)
+            width, height = final_dimensions_mm(item, size["editor_params"], preview_elements)
+            relief_height = relief_height_for_params(size["editor_params"], preview_elements)
             size["preview_bounds_mm"] = {
                 "width": round(width, 3),
                 "height": round(height, 3),
-                "z": round(size["editor_params"]["thickness_mm"] + size["editor_params"]["relief_height_mm"], 3),
+                "z": round(size["editor_params"]["thickness_mm"] + relief_height, 3),
             }
         editable.append(item)
     return editable
@@ -557,7 +575,7 @@ def bounds_for_params(
         "height": round(height, 3),
         "z": round(
             _float(params.get("thickness_mm"), DEFAULT_BASE_HEIGHT_MM)
-            + _float(params.get("relief_height_mm"), DEFAULT_RELIEF_HEIGHT_MM),
+            + relief_height_for_params(params, selected_elements),
             3,
         ),
     }

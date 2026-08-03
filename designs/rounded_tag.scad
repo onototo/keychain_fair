@@ -68,7 +68,7 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
 
     color(PREVIEW_RELIEF_COLOR)
         translate([0, 0, body_thickness])
-            oval_border(body_width, body_height, 1.25, min(0.34, relief_height));
+            oval_border(body_width, body_height, 1.25, line_1_relief);
 
     color(PREVIEW_RELIEF_COLOR)
         translate([hole_x, hole_y, body_thickness])

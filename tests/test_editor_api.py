@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from keychain_fair.adapters import AdapterResult
 from keychain_fair.config import PROJECT_ROOT
-from keychain_fair.editor import fit_custom_text_layout, order_with_fitted_custom_text
+from keychain_fair.editor import bounds_for_params, fit_custom_text_layout, order_with_fitted_custom_text
 from tests.support import ADMIN_HEADERS, INTERNAL_HEADERS, FakeGenerator, create_test_app, make_settings, make_temp_design_settings, order_payload
 
 
@@ -157,6 +157,23 @@ def test_model_editor_preview_creates_authenticated_stl(tmp_path):
     assert payload["bounds"]["z"] == round(size["editor_params"]["thickness_mm"] + size["editor_params"]["relief_height_mm"], 3)
     assert stl_response.status_code == 200
     assert b"solid preview" in stl_response.content
+
+
+def test_bounds_uses_text_relief_when_text_is_taller():
+    params = {
+        "base_width_mm": 64,
+        "base_height_mm": 24,
+        "thickness_mm": 2.1,
+        "relief_height_mm": 0.4,
+        "text_blocks": {
+            "car": {"relief_height_mm": 1.2},
+            "phone": {"relief_height_mm": 0.8},
+        },
+    }
+
+    bounds = bounds_for_params({"id": "classic_plate"}, params, [{"shape": "car"}])
+
+    assert bounds["z"] == 3.3
 
 
 def test_model_editor_preview_uses_current_editor_base_height(tmp_path):
