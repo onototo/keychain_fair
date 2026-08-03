@@ -12,7 +12,7 @@ from .batching import layout_orders, write_batch_manifest
 from .config import AppSettings
 from .database import Database
 from .designs import DesignCatalog, DesignCatalogError
-from .editor import model_params_for_selection
+from .editor import final_dimensions_mm, model_params_for_selection
 from .moderation import MUTE_SECONDS, contains_profanity
 from .models import OrderCreate
 from .validation import normalize_by_car_number, split_by_car_number
@@ -181,6 +181,51 @@ class OrderService:
         payload_data = self._print_payload(payload, selection.design)
         model_params = model_params_for_selection(selection, self.settings.model.base_height_mm)
         return self.database.create_order(payload_data, selection, model_params)
+
+    def build_order_preview(self, payload: OrderCreate, preview_id: str = "telegram_preview") -> tuple[dict[str, Any], dict[str, Any]]:
+        selection = self.catalog.validate_selection(payload.design_id, payload.size_id, payload.elements)
+        identity = self._order_identity(payload)
+        if identity is not None:
+            self._ensure_not_muted(*identity)
+            self._ensure_order_quota(*identity)
+        if contains_profanity(
+            payload.customer_name,
+            payload.car_number,
+            payload.print_line_1,
+            payload.print_line_2,
+        ):
+            raise OrderBlockedError(
+                "Order contains prohibited words. You can create a new order in 5 minutes.",
+                status_code=429,
+                retry_after_seconds=MUTE_SECONDS,
+            )
+
+        payload_data = self._print_payload(payload, selection.design)
+        model_params = model_params_for_selection(selection, self.settings.model.base_height_mm)
+        width_mm, height_mm = final_dimensions_mm(selection.design, model_params, selection.elements)
+        size = selection.size
+        car_block = model_params.get("text_blocks", {}).get("car", {})
+        return (
+            {
+                "id": preview_id,
+                "customer_name": payload_data["customer_name"],
+                "car_number": payload_data["car_number"],
+                "phone": payload_data.get("phone", ""),
+                "print_line_1": payload_data.get("print_line_1", ""),
+                "print_line_2": payload_data.get("print_line_2", ""),
+                "design_id": selection.design["id"],
+                "design_name": selection.design["name"],
+                "size_id": size["id"],
+                "size_label": size["label"],
+                "selected_elements": selection.elements,
+                "width_mm": width_mm,
+                "height_mm": height_mm,
+                "thickness_mm": float(model_params.get("thickness_mm", size["thickness_mm"])),
+                "font_size_mm": float(car_block.get("font_size_mm", size["font_size_mm"])),
+                "model_params": model_params,
+            },
+            selection.design,
+        )
 
     def _order_identity(self, payload: OrderCreate) -> tuple[str, str] | None:
         source = str(getattr(payload, "source", "") or "web")

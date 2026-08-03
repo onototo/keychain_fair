@@ -1,4 +1,4 @@
-# Заполните этот файл под конкретный принтер перед включением slicing.
+# Fill this file for the target printer before enabling slicing.
 printer:
   name: Example FDM printer
   bed_size_mm: [220, 220, 250]
@@ -16,7 +16,7 @@ quality:
   print_speed_mm_s: 50
 
 cura_engine:
-  # CuraEngine CLI требует settings JSON/definition-файлы Cura.
-  # После установки Cura укажите путь к реальному settings JSON и дополнительные -s параметры.
+  # CuraEngine CLI requires Cura settings JSON/definition files.
+  # After installing Cura, set the real settings JSON path and any extra -s parameters.
   settings_json_path: ""
   extra_args: []

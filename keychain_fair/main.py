@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import json
 import logging
 from pathlib import Path
 import secrets
@@ -438,6 +440,32 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"order": _public_order(order)}
 
+    @app.post("/api/internal/order-preview/render.png", dependencies=[Depends(require_internal)])
+    def render_internal_order_preview(payload: InternalOrderCreate) -> FileResponse:
+        try:
+            preview_order, design = service.build_order_preview(payload)
+        except OrderBlockedError as exc:
+            detail: dict[str, Any] = {"message": exc.message}
+            headers = None
+            if exc.retry_after_seconds is not None:
+                detail["retry_after_seconds"] = exc.retry_after_seconds
+                headers = {"Retry-After": str(exc.retry_after_seconds)}
+            raise HTTPException(status_code=exc.status_code, detail=detail, headers=headers) from exc
+        except DesignCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        cache_payload = {
+            "render_version": "telegram-preview-colors-v1",
+            "payload": payload.model_dump(mode="json"),
+            "model_params": preview_order.get("model_params"),
+            "selected_elements": preview_order.get("selected_elements"),
+        }
+        cache_key = hashlib.sha256(json.dumps(cache_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        result = model_generator.render_order_preview_png(cache_key, preview_order, design)
+        if not result.success or not result.output_path:
+            raise HTTPException(status_code=503, detail=result.message)
+        return FileResponse(result.output_path, media_type="image/png", filename="order-preview.png")
+
     @app.get("/api/orders/{order_id}")
     def get_order(order_id: str) -> dict[str, Any]:
         try:
@@ -521,7 +549,7 @@ def create_app(
             "bounds": bounds_for_params(design, params, order["selected_elements"]),
             "filament_change_height_mm": params.get("thickness_mm", order["thickness_mm"]),
             "stl_url": f"/api/admin/model-editor/previews/{preview_id}.stl",
-            "text_layout": custom_text_layout_for_order(order, design),
+            "text_layout": (result.extra or {}).get("text_layout") or custom_text_layout_for_order(order, design),
             "order": {
                 "id": order["id"],
                 "customer_name": order["customer_name"],
@@ -633,7 +661,7 @@ def create_app(
             "bounds": bounds_for_params(design, params, order["selected_elements"]),
             "filament_change_height_mm": params["thickness_mm"],
             "stl_url": f"/api/admin/model-editor/previews/{preview_id}.stl",
-            "text_layout": custom_text_layout_for_order(order, design),
+            "text_layout": (result.extra or {}).get("text_layout") or custom_text_layout_for_order(order, design),
         }
 
     @app.get("/api/admin/model-editor/previews/{preview_id}.stl", dependencies=[Depends(require_admin)])

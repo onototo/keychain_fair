@@ -157,12 +157,12 @@ async function showLoopSide(ctx: Context, session: DraftSession, design: Design)
 async function askPrintText(ctx: Context, session: DraftSession, design: Design): Promise<void> {
   session.step = "print_text";
   const limit = customTextLimit(design, session.data.sizeId);
-  await saveAndReply(ctx, session, `Введите текст для брелока. Максимальная длина текста: ${limit} символов.`);
+  await saveAndReply(ctx, session, `Введите текст который вы хотите напечатать. Максимальная длина текста: ${limit} символов.`);
 }
 
 async function askName(ctx: Context, session: DraftSession): Promise<void> {
   session.step = "name";
-  await saveAndReply(ctx, session, "Введите имя для заказа.");
+  await saveAndReply(ctx, session, "Введите ваше имя.");
 }
 
 async function askCar(ctx: Context, session: DraftSession): Promise<void> {
@@ -181,6 +181,18 @@ async function showConfirmation(ctx: Context, session: DraftSession, design: Des
     .row()
     .text("Отменить", "cancel");
   const caption = orderSummary(design, session.data);
+  try {
+    const payload = buildOrderPayload(session.data, session.draftId, telegramMeta(ctx));
+    const buffer = await api.renderOrderPreview(payload);
+    await ctx.replyWithPhoto(new InputFile(buffer, `${session.draftId}.png`), {
+      caption,
+      reply_markup: keyboard,
+    });
+    return;
+  } catch (error) {
+    console.warn(error);
+  }
+
   const previewUrl = api.previewUrl(design);
 
   if (previewUrl) {
@@ -426,7 +438,7 @@ bot.callbackQuery("confirm", async (ctx) => {
     const payload = buildOrderPayload(current.session.data, current.session.draftId, telegramMeta(ctx));
     const result = await api.createOrder(payload);
     await sessions.clear(chatId(ctx));
-    await ctx.reply(`Заказ создан: ${result.order.id}. Оператор увидит его в админке.`, { reply_markup: mainKeyboard() });
+    await ctx.reply(`Заказ ${result.order.id} создан и передан администратору. Можете пройти на оплату.`, { reply_markup: mainKeyboard() });
   } catch (error) {
     await ctx.reply(`Не получилось создать заказ: ${(error as Error).message}`);
   }

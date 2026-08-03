@@ -41,6 +41,8 @@ function block_start(kind) = kind == "name" ? 7 : kind == "car" ? 13 : 19;
 function block_param(params, kind, offset, fallback) = ep(params, block_start(kind) + offset, fallback);
 function block_param_pos(params, kind, offset, fallback) =
     block_param(params, kind, offset, fallback) > 0 ? block_param(params, kind, offset, fallback) : fallback;
+PREVIEW_BASE_COLOR = "#2f7f77";
+PREVIEW_RELIEF_COLOR = "#f0b429";
 
 module rounded_rect_2d(width, height, radius) {
     hull() {
@@ -200,35 +202,42 @@ module stacked_plate_keychain(customer_name, car_number, phone_number, selected_
 
     difference() {
         union() {
-            translate([body_x, 0, 0])
-                linear_extrude(height = plate_z)
-                    stepped_shape_2d(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count);
+            color(PREVIEW_BASE_COLOR)
+                translate([body_x, 0, 0])
+                    linear_extrude(height = plate_z)
+                        stepped_shape_2d(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count);
 
-            translate([body_x, 0, plate_z])
-                raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, border_width, min(0.34, relief_height));
+            color(PREVIEW_RELIEF_COLOR)
+                translate([body_x, 0, plate_z])
+                    raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, border_width, min(0.34, relief_height));
 
             if (style == "frame" || style == "layered") {
-                translate([body_x, 0, plate_z + min(0.34, relief_height)])
-                    raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, 2.25, min(0.14, relief_height));
+                color(PREVIEW_RELIEF_COLOR)
+                    translate([body_x, 0, plate_z + min(0.34, relief_height)])
+                        raised_outline(body_width, total_height, center_height, side_height, overlap, side_width_ratio, loop_side, count, 2.25, min(0.14, relief_height));
             }
 
-            translate([body_x, 0, 0])
-                decorative_dots(body_width, center_y, center_height, plate_z + min(0.48, relief_height), style);
+            color(PREVIEW_RELIEF_COLOR)
+                translate([body_x, 0, 0])
+                    decorative_dots(body_width, center_y, center_height, plate_z + min(0.48, relief_height), style);
 
             if (count == 1) {
-                translate([body_x, 0, 0])
-                    slot_text("center", center_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
+                color(PREVIEW_RELIEF_COLOR)
+                    translate([body_x, 0, 0])
+                        slot_text("center", center_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
             } else if (count == 2) {
-                translate([body_x, 0, 0]) {
-                    slot_text("center", center_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
-                    slot_text("bottom", bottom_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.76, style, editor_params);
-                }
+                color(PREVIEW_RELIEF_COLOR)
+                    translate([body_x, 0, 0]) {
+                        slot_text("center", center_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
+                        slot_text("bottom", bottom_kind(selected_elements), body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.76, style, editor_params);
+                    }
             } else {
-                translate([body_x, 0, 0]) {
-                    slot_text("top", "name", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.72, style, editor_params);
-                    slot_text("center", "car", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
-                    slot_text("bottom", "phone", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.76, style, editor_params);
-                }
+                color(PREVIEW_RELIEF_COLOR)
+                    translate([body_x, 0, 0]) {
+                        slot_text("top", "name", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.72, style, editor_params);
+                        slot_text("center", "car", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size, style, editor_params);
+                        slot_text("bottom", "phone", body_width, center_y, center_height, side_height, overlap, side_width_ratio, customer_name, car_number, phone_number, plate_z, font_size * 0.76, style, editor_params);
+                    }
             }
         }
 

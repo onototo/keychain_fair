@@ -1,6 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +19,13 @@ import httpx
 import yaml
 
 from .config import AppSettings
-from .editor import editor_params_to_scad_array, order_with_fitted_custom_text
+from .editor import (
+    CUSTOM_TEXT_LINE_GAP_FACTOR,
+    CUSTOM_TEXT_MAX_FONT_SIZE_MM,
+    CUSTOM_TEXT_MIN_FONT_SIZE_MM,
+    editor_params_to_scad_array,
+    order_with_fitted_custom_text,
+)
 
 
 FILAMENT_CHANGE_MARKER = "KEYCHAIN_FAIR_FILAMENT_CHANGE"
@@ -87,6 +95,42 @@ def _font_size_from_params(params: dict[str, Any], fallback: float) -> float:
         return float(car_block.get("font_size_mm", fallback))
     except (TypeError, ValueError):
         return fallback
+
+
+def _safe_float(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _clamp_float(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    number = _safe_float(value, fallback)
+    if number < minimum:
+        return minimum
+    if number > maximum:
+        return maximum
+    return number
+
+
+def _clean_text(value: str) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _two_line_space_candidates(full_text: str) -> list[list[str]]:
+    cleaned = _clean_text(full_text)
+    if len(cleaned) <= 1:
+        return [[cleaned]]
+
+    candidates: list[list[str]] = [[cleaned]]
+    for index, char in enumerate(cleaned):
+        if char != " ":
+            continue
+        first = _clean_text(cleaned[:index])
+        second = _clean_text(cleaned[index + 1 :])
+        if first and second:
+            candidates.append([first, second])
+    return candidates
 
 
 def _binary_stl_triangle_count(data: bytes) -> int | None:
@@ -190,6 +234,8 @@ def _write_binary_stl(
 class OpenScadModelGenerator:
     def __init__(self, settings: AppSettings):
         self.settings = settings
+        self._text_metric_cache: dict[str, tuple[float, float]] = {}
+        self._text_metric_lock = threading.Lock()
 
     def check_ready(self) -> AdapterResult:
         executable = _resolve_executable(self.settings.tools.openscad_path)
@@ -224,6 +270,49 @@ class OpenScadModelGenerator:
         preview_dir = self.settings.generated_dir / "editor" / "previews" / preview_id
         return self._generate_stl(ready, order, design, preview_dir, preview_id, "Preview STL created")
 
+    def render_order_preview_png(
+        self,
+        cache_key: str,
+        order: dict[str, Any],
+        design: dict[str, Any],
+        image_size: tuple[int, int] = (480, 320),
+    ) -> AdapterResult:
+        ready = self.check_ready()
+        if not ready.success:
+            return ready
+
+        safe_key = "".join(char for char in cache_key.lower() if char in "abcdefghijklmnopqrstuvwxyz0123456789_-")[:80]
+        if not safe_key:
+            return AdapterResult(False, "Preview cache key is empty")
+
+        preview_dir = self.settings.generated_dir / "telegram" / "previews" / safe_key
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        png_path = preview_dir / "preview.png"
+        wrapper_path = preview_dir / "preview.scad"
+        if png_path.exists():
+            return AdapterResult(True, "Preview PNG cached", png_path, {"wrapper_scad_path": str(wrapper_path), "cached": True})
+
+        prepared = self._write_order_wrapper_scad(ready, order, design, preview_dir, "preview")
+        command = self._with_virtual_display([
+            str(ready.output_path),
+            "-o",
+            str(png_path),
+            "--imgsize",
+            f"{int(image_size[0])},{int(image_size[1])}",
+            "--viewall",
+            "--autocenter",
+            "--projection",
+            "perspective",
+            str(prepared["wrapper_path"]),
+        ])
+        result = self._run_command(command, png_path, "Preview PNG created", "OpenSCAD PNG preview failed")
+        if result.extra is None:
+            result = AdapterResult(result.success, result.message, result.output_path, {})
+        result.extra["wrapper_scad_path"] = str(prepared["wrapper_path"])
+        if prepared["text_layout"] is not None:
+            result.extra["text_layout"] = prepared["text_layout"]
+        return result
+
     def _generate_stl(
         self,
         ready: AdapterResult,
@@ -234,9 +323,42 @@ class OpenScadModelGenerator:
         success_message: str,
     ) -> AdapterResult:
         target_dir.mkdir(parents=True, exist_ok=True)
-        wrapper_path = target_dir / f"{file_stem}.scad"
         stl_path = target_dir / f"{file_stem}.stl"
+        prepared = self._write_order_wrapper_scad(ready, order, design, target_dir, file_stem)
+        wrapper_path = prepared["wrapper_path"]
+        text_layout = prepared["text_layout"]
+        command = [
+            str(ready.output_path),
+            "--export-format",
+            "binstl",
+            "-o",
+            str(stl_path),
+            str(wrapper_path),
+        ]
+        result = self._run_command(command, stl_path, success_message, "OpenSCAD STL generation failed")
+        if result.extra is None:
+            result = AdapterResult(result.success, result.message, result.output_path, {})
+        result.extra["wrapper_scad_path"] = str(wrapper_path)
+        if text_layout is not None:
+            result.extra["text_layout"] = text_layout
+        return result
+
+    def _write_order_wrapper_scad(
+        self,
+        ready: AdapterResult,
+        order: dict[str, Any],
+        design: dict[str, Any],
+        target_dir: Path,
+        file_stem: str,
+    ) -> dict[str, Any]:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        wrapper_path = target_dir / f"{file_stem}.scad"
+        original_order = order
         order, text_layout = order_with_fitted_custom_text(order, design)
+        exact_order, exact_layout = self._order_with_exact_custom_text_fit(original_order, design, ready.output_path, target_dir)
+        if exact_layout is not None:
+            order = exact_order
+            text_layout = exact_layout
         element_shapes = [item.get("shape", item["id"]) for item in order["selected_elements"]]
         if design.get("print_mode") == "by_number_single" and not element_shapes:
             element_shapes = ["car"]
@@ -277,22 +399,152 @@ class OpenScadModelGenerator:
             ),
             encoding="utf-8",
         )
+        return {"wrapper_path": wrapper_path, "text_layout": text_layout}
 
-        command = [
-            str(ready.output_path),
-            "--export-format",
-            "binstl",
-            "-o",
-            str(stl_path),
-            str(wrapper_path),
-        ]
-        result = self._run_command(command, stl_path, success_message, "OpenSCAD STL generation failed")
-        if result.extra is None:
-            result = AdapterResult(result.success, result.message, result.output_path, {})
-        result.extra["wrapper_scad_path"] = str(wrapper_path)
-        if text_layout is not None:
-            result.extra["text_layout"] = text_layout
-        return result
+    def _with_virtual_display(self, command: list[str]) -> list[str]:
+        if os.environ.get("DISPLAY"):
+            return command
+        xvfb_run = shutil.which("xvfb-run")
+        if not xvfb_run:
+            return command
+        return [xvfb_run, "-a", *command]
+
+    def _order_with_exact_custom_text_fit(
+        self,
+        order: dict[str, Any],
+        design: dict[str, Any],
+        openscad_path: Path,
+        target_dir: Path,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        if design.get("print_mode") != "custom_text":
+            return order, None
+        params = _order_model_params(order)
+        if not isinstance(params, dict):
+            return order, None
+
+        text_blocks = params.get("text_blocks") if isinstance(params.get("text_blocks"), dict) else {}
+        block = text_blocks.get("car") if isinstance(text_blocks.get("car"), dict) else {}
+        box_width = _safe_float(block.get("box_width_mm"), _safe_float(params.get("base_width_mm"), 60.0) - 22.0)
+        box_height = _safe_float(block.get("box_height_mm"), _safe_float(params.get("base_height_mm"), 24.0) * 0.48)
+        line_spacing = _clamp_float(params.get("line_spacing"), CUSTOM_TEXT_LINE_GAP_FACTOR, 0.7, 1.8)
+        full_text = _clean_text(" ".join(item for item in _print_lines(order) if item))
+        if not full_text:
+            return order, None
+
+        try:
+            layout = self._exact_custom_text_layout(
+                full_text,
+                max(1.0, box_width),
+                max(1.0, box_height),
+                line_spacing,
+                openscad_path,
+                target_dir / "_text_metrics",
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return order, None
+
+        fitted_order = deepcopy(order)
+        fitted_params = deepcopy(params)
+        fitted_params.setdefault("text_blocks", {}).setdefault("car", {})["font_size_mm"] = layout["font_size_mm"]
+        fitted_params["text_exact_fit"] = 1
+        fitted_order["model_params"] = fitted_params
+        fitted_order["print_line_1"] = layout["lines"][0]
+        fitted_order["print_line_2"] = layout["lines"][1]
+        fitted_order["font_size_mm"] = layout["font_size_mm"]
+        layout["box_width_mm"] = round(max(1.0, box_width), 3)
+        layout["box_height_mm"] = round(max(1.0, box_height), 3)
+        return fitted_order, layout
+
+    def _exact_custom_text_layout(
+        self,
+        full_text: str,
+        box_width: float,
+        box_height: float,
+        line_spacing: float,
+        openscad_path: Path,
+        metrics_dir: Path,
+    ) -> dict[str, Any]:
+        one_line = [full_text]
+        one_size = self._exact_font_size(one_line, box_width, box_height, line_spacing, openscad_path, metrics_dir)
+        if one_size >= CUSTOM_TEXT_MIN_FONT_SIZE_MM:
+            lines = [full_text, ""]
+            font_size = one_size
+        else:
+            candidates = _two_line_space_candidates(full_text)
+            if len(candidates) == 1 and candidates[0] == one_line:
+                lines = [full_text, ""]
+                font_size = one_size
+            else:
+                best = max(
+                    candidates,
+                    key=lambda item: self._exact_font_size(item, box_width, box_height, line_spacing, openscad_path, metrics_dir),
+                )
+                lines = [best[0], best[1] if len(best) > 1 else ""]
+                font_size = self._exact_font_size(best, box_width, box_height, line_spacing, openscad_path, metrics_dir)
+
+        return {
+            "lines": lines,
+            "font_size_mm": round(max(0.1, min(font_size, CUSTOM_TEXT_MAX_FONT_SIZE_MM)), 3),
+            "fits": font_size >= CUSTOM_TEXT_MIN_FONT_SIZE_MM,
+            "min_font_size_mm": round(CUSTOM_TEXT_MIN_FONT_SIZE_MM, 3),
+            "line_spacing": round(line_spacing, 3),
+            "fit_source": "openscad_bounds",
+        }
+
+    def _exact_font_size(
+        self,
+        lines: list[str],
+        box_width: float,
+        box_height: float,
+        line_spacing: float,
+        openscad_path: Path,
+        metrics_dir: Path,
+    ) -> float:
+        cleaned = [_clean_text(line) for line in lines if _clean_text(line)]
+        if not cleaned:
+            return CUSTOM_TEXT_MIN_FONT_SIZE_MM
+
+        metrics = [self._text_metric(line, openscad_path, metrics_dir) for line in cleaned]
+        width_size = min(box_width / max(width, 0.001) for width, _height in metrics)
+        if len(metrics) == 1:
+            height_units = max(metrics[0][1], 0.001)
+        else:
+            height_units = line_spacing + (metrics[0][1] + metrics[1][1]) / 2
+        height_size = box_height / max(height_units, 0.001)
+        return max(0.1, min(width_size, height_size, CUSTOM_TEXT_MAX_FONT_SIZE_MM))
+
+    def _text_metric(self, text: str, openscad_path: Path, metrics_dir: Path) -> tuple[float, float]:
+        key = f"Liberation Sans:style=Bold\x00{text}"
+        with self._text_metric_lock:
+            cached = self._text_metric_cache.get(key)
+        if cached is not None:
+            return cached
+
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        scad_path = metrics_dir / f"text_{digest}.scad"
+        stl_path = metrics_dir / f"text_{digest}.stl"
+        probe_size = 10.0
+        scad_path.write_text(
+            "\n".join(
+                [
+                    "linear_extrude(height = 0.1)",
+                    f"    text({_scad_string(text)}, size = {probe_size}, halign = \"center\", valign = \"center\", font = \"Liberation Sans:style=Bold\");",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        command = [str(openscad_path), "--export-format", "binstl", "-o", str(stl_path), str(scad_path)]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if completed.returncode != 0 or not stl_path.exists():
+            raise subprocess.CalledProcessError(completed.returncode, command, completed.stdout, completed.stderr)
+
+        bounds = stl_bounds(stl_path)
+        metric = (max(bounds["width_mm"] / probe_size, 0.001), max(bounds["height_mm"] / probe_size, 0.001))
+        with self._text_metric_lock:
+            self._text_metric_cache[key] = metric
+        return metric
 
     def combine_batch_stl(self, batch_id: str, layout_items: list[dict[str, Any]]) -> AdapterResult:
         batch_dir = self.settings.generated_dir / "batches" / batch_id

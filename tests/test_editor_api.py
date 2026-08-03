@@ -2,9 +2,10 @@ import json
 
 from fastapi.testclient import TestClient
 
+from keychain_fair.adapters import AdapterResult
 from keychain_fair.config import PROJECT_ROOT
 from keychain_fair.editor import fit_custom_text_layout, order_with_fitted_custom_text
-from tests.support import ADMIN_HEADERS, FakeGenerator, create_test_app, make_settings, make_temp_design_settings, order_payload
+from tests.support import ADMIN_HEADERS, INTERNAL_HEADERS, FakeGenerator, create_test_app, make_settings, make_temp_design_settings, order_payload
 
 
 class RecordingPreviewGenerator(FakeGenerator):
@@ -15,6 +16,21 @@ class RecordingPreviewGenerator(FakeGenerator):
     def generate_preview_stl(self, preview_id, order, design):
         self.preview_orders.append({"preview_id": preview_id, "order": dict(order), "design": dict(design)})
         return super().generate_preview_stl(preview_id, order, design)
+
+
+class RecordingPngGenerator(FakeGenerator):
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.png_orders = []
+
+    def render_order_preview_png(self, cache_key, order, design, image_size=(480, 320)):
+        self.png_orders.append({"cache_key": cache_key, "order": dict(order), "design": dict(design), "image_size": image_size})
+        return super().render_order_preview_png(cache_key, order, design, image_size)
+
+
+class UnavailablePngGenerator(FakeGenerator):
+    def render_order_preview_png(self, cache_key, order, design, image_size=(480, 320)):
+        return AdapterResult(False, "OpenSCAD not available")
 
 
 def assert_base_layer_aligned(value):
@@ -36,11 +52,19 @@ def test_custom_text_layout_grows_short_text_to_zone():
 
 
 def test_custom_text_layout_wraps_before_dropping_below_minimum():
-    layout = fit_custom_text_layout("ALPHA BETA GAMMA", 46, 14.4)
+    layout = fit_custom_text_layout("ALPHA BETA", 46, 14.4)
 
-    assert layout["lines"] == ["ALPHA BETA", "GAMMA"]
+    assert layout["lines"] == ["ALPHA", "BETA"]
     assert layout["font_size_mm"] >= 6
     assert layout["fits"] is True
+
+
+def test_custom_text_layout_shrinks_car_like_text_inside_width():
+    layout = fit_custom_text_layout("1234AB7", 46, 14.4)
+
+    assert layout["lines"] == ["1234AB7", ""]
+    assert layout["font_size_mm"] < 6
+    assert layout["fits"] is False
 
 
 def test_custom_text_layout_reports_when_minimum_font_does_not_fit():
@@ -52,8 +76,8 @@ def test_custom_text_layout_reports_when_minimum_font_does_not_fit():
 
 
 def test_custom_text_layout_uses_line_spacing_for_wrapped_text():
-    compact = fit_custom_text_layout("ABCDE ABCDE", 46, 14.4, line_spacing=0.8)
-    loose = fit_custom_text_layout("ABCDE ABCDE", 46, 14.4, line_spacing=1.6)
+    compact = fit_custom_text_layout("ALPHA BETA", 46, 14.4, line_spacing=0.8)
+    loose = fit_custom_text_layout("ALPHA BETA", 46, 14.4, line_spacing=1.6)
 
     assert compact["lines"] == loose["lines"]
     assert compact["font_size_mm"] > loose["font_size_mm"]
@@ -62,7 +86,7 @@ def test_custom_text_layout_uses_line_spacing_for_wrapped_text():
 
 def test_order_with_fitted_custom_text_updates_generated_lines_and_font():
     order = {
-        "print_line_1": "ALPHA BETA GAMMA",
+        "print_line_1": "ALPHA BETA",
         "print_line_2": "",
         "font_size_mm": 7,
         "model_params": {
@@ -78,10 +102,10 @@ def test_order_with_fitted_custom_text_updates_generated_lines_and_font():
     fitted, layout = order_with_fitted_custom_text(order, {"print_mode": "custom_text"})
 
     assert layout["fits"] is True
-    assert fitted["print_line_1"] == "ALPHA BETA"
-    assert fitted["print_line_2"] == "GAMMA"
+    assert fitted["print_line_1"] == "ALPHA"
+    assert fitted["print_line_2"] == "BETA"
     assert fitted["model_params"]["text_blocks"]["car"]["font_size_mm"] == layout["font_size_mm"]
-    assert order["print_line_1"] == "ALPHA BETA GAMMA"
+    assert order["print_line_1"] == "ALPHA BETA"
 
 
 def test_model_editor_designs_returns_editable_params(tmp_path):
@@ -294,6 +318,74 @@ def test_admin_order_preview_3d_uses_order_custom_text_lines(tmp_path):
     assert recorded_order["print_line_2"] == ""
     assert preview.json()["order"]["print_line_1"] == "1234 AB-7 +375291234567"
     assert preview.json()["order"]["print_line_2"] == ""
+
+
+def test_internal_order_preview_png_requires_internal_token(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post("/api/internal/order-preview/render.png", json=order_payload())
+
+    assert response.status_code == 401
+
+
+def test_internal_order_preview_png_returns_image_and_does_not_create_order(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/internal/order-preview/render.png",
+            headers=INTERNAL_HEADERS,
+            json=order_payload(idempotency_key="telegram-preview-no-order"),
+        )
+        orders = app.state.database.list_orders(include_archived=True)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert orders == []
+
+
+def test_internal_order_preview_png_uses_normalized_custom_text(tmp_path):
+    settings = make_settings(tmp_path)
+    generator = RecordingPngGenerator(settings)
+    app = create_test_app(settings, generator=generator)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/internal/order-preview/render.png",
+            headers=INTERNAL_HEADERS,
+            json=order_payload(
+                design_id="rounded_tag",
+                size_id="standard",
+                print_line_1="1234 AB-7",
+                print_line_2="+375291234567",
+                idempotency_key="telegram-preview-custom-text",
+            ),
+        )
+
+    assert response.status_code == 200
+    recorded_order = generator.png_orders[-1]["order"]
+    assert recorded_order["print_line_1"] == "1234 AB-7 +375291234567"
+    assert recorded_order["print_line_2"] == ""
+    assert generator.png_orders[-1]["image_size"] == (480, 320)
+
+
+def test_internal_order_preview_png_returns_503_when_renderer_is_unavailable(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_test_app(settings, generator=UnavailablePngGenerator(settings))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/internal/order-preview/render.png",
+            headers=INTERNAL_HEADERS,
+            json=order_payload(idempotency_key="telegram-preview-render-unavailable"),
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "OpenSCAD not available"
 
 
 def test_admin_script_links_each_order_to_3d_preview():

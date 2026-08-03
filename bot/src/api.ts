@@ -22,6 +22,22 @@ export class KeychainApi {
     });
   }
 
+  async renderOrderPreview(payload: OrderPayload): Promise<Buffer> {
+    const response = await fetch(`${this.apiBaseUrl}/api/internal/order-preview/render.png`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Token": this.internalToken,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}));
+      throw new Error(apiErrorMessage(errorPayload, response.status));
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   previewUrl(design: Design): string | null {
     if (!design.preview_image) return null;
     if (/^https?:\/\//i.test(design.preview_image)) return design.preview_image;

@@ -15,7 +15,7 @@ DEFAULT_BASE_HEIGHT_MM = 3.2
 DEFAULT_RELIEF_HEIGHT_MM = 0.8
 CUSTOM_TEXT_MIN_FONT_SIZE_MM = 6.0
 CUSTOM_TEXT_MAX_FONT_SIZE_MM = 40.0
-CUSTOM_TEXT_WIDTH_FACTOR = 1.35
+CUSTOM_TEXT_WIDTH_FACTOR = 0.82
 CUSTOM_TEXT_LINE_GAP_FACTOR = 1.08
 PRINT_FIRST_LAYER_HEIGHT_MM = 0.1
 PRINT_LAYER_HEIGHT_MM = 0.2
@@ -269,6 +269,7 @@ def normalize_editor_params(
             _clamp(source.get("line_spacing"), default.get("line_spacing", CUSTOM_TEXT_LINE_GAP_FACTOR), 0.7, 1.8),
             3,
         ),
+        "text_exact_fit": round(_clamp(source.get("text_exact_fit"), default.get("text_exact_fit", 0), 0, 1), 3),
         "hole": {
             "x_mm": round(_clamp(hole_source.get("x_mm"), default_hole.get("x_mm", 0), -80, 160), 3),
             "y_mm": round(_clamp(hole_source.get("y_mm"), default_hole.get("y_mm", 0), -80, 160), 3),
@@ -344,20 +345,7 @@ def _two_line_candidates(full_text: str) -> list[list[str]]:
     if candidates:
         return candidates
 
-    midpoint = len(full_text) / 2
-    for index in sorted({max(1, min(len(full_text) - 1, int(midpoint))), max(1, min(len(full_text) - 1, round(midpoint)))}):
-        candidate = _split_candidate(full_text, index)
-        if all(candidate):
-            candidates.append(candidate)
-
-    unique: list[list[str]] = []
-    seen: set[tuple[str, str]] = set()
-    for candidate in candidates:
-        key = (candidate[0], candidate[1])
-        if key not in seen:
-            unique.append(candidate)
-            seen.add(key)
-    return unique or [[full_text]]
+    return [[full_text]]
 
 
 def fit_custom_text_layout(
@@ -466,6 +454,7 @@ def editor_params_to_scad_array(params: dict[str, Any]) -> str:
             values.append(_float(block.get(field), 0.0))
     values.append(_float(params.get("section_overlap_mm"), 0.0))
     values.append(_float(params.get("line_spacing"), CUSTOM_TEXT_LINE_GAP_FACTOR))
+    values.append(_float(params.get("text_exact_fit"), 0.0))
     return "[" + ", ".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in values) + "]"
 
 

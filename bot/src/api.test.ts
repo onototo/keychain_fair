@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { apiErrorMessage } from "./api.js";
+import { KeychainApi, apiErrorMessage } from "./api.js";
 
 test("apiErrorMessage translates pydantic car number errors to Russian", () => {
   const message = apiErrorMessage(
@@ -42,4 +42,40 @@ test("apiErrorMessage uses Russian fallback", () => {
     apiErrorMessage({}, 500),
     "Сервер вернул ошибку 500. Попробуйте ещё раз или обратитесь к оператору.",
   );
+});
+
+test("renderOrderPreview posts draft payload and returns a PNG buffer", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  let capturedInput: string | URL | Request = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = async (input, init) => {
+    capturedInput = input;
+    capturedInit = init;
+    return new Response(png, { status: 200, headers: { "Content-Type": "image/png" } });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const payload = {
+    customer_name: "Anna",
+    car_number: "",
+    design_id: "classic_plate",
+    size_id: "standard",
+    elements: [],
+    print_line_1: "Hello",
+    print_line_2: "",
+    idempotency_key: "tg:1:draft",
+    source: "telegram" as const,
+    telegram_chat_id: "1",
+  };
+
+  const buffer = await new KeychainApi("http://api.test", "secret").renderOrderPreview(payload);
+
+  assert.equal(capturedInput, "http://api.test/api/internal/order-preview/render.png");
+  assert.equal(capturedInit?.method, "POST");
+  assert.equal((capturedInit?.headers as Record<string, string>)["X-Internal-Token"], "secret");
+  assert.deepEqual(JSON.parse(String(capturedInit?.body)), payload);
+  assert.deepEqual(buffer, png);
 });

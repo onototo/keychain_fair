@@ -12,6 +12,8 @@ function block_start(kind) = kind == "name" ? 7 : kind == "car" ? 13 : 19;
 function block_param(params, kind, offset, fallback) = ep(params, block_start(kind) + offset, fallback);
 function block_param_pos(params, kind, offset, fallback) =
     block_param(params, kind, offset, fallback) > 0 ? block_param(params, kind, offset, fallback) : fallback;
+PREVIEW_BASE_COLOR = "#2f7f77";
+PREVIEW_RELIEF_COLOR = "#f0b429";
 
 module border(size, radius, border_width, height_on_top) {
     linear_extrude(height = height_on_top) {
@@ -49,23 +51,28 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
     bottom_font = block_param_pos(editor_params, "phone", 4, font_size * 0.72);
     bottom_relief = block_param_pos(editor_params, "phone", 5, relief_height);
 
-    difference() {
-        linear_extrude(height = body_thickness)
-            rounded_square_2d(body_size, radius);
-        translate([hole_x, hole_y, -0.1])
-            cylinder(h = body_thickness + 0.25, r = hole_radius, $fn = 30);
-    }
-
-    translate([0, 0, body_thickness])
-        border(body_size, radius, 1.1, min(0.32, relief_height));
-
-    translate([hole_x, hole_y, body_thickness])
+    color(PREVIEW_BASE_COLOR)
         difference() {
-            cylinder(h = min(0.54, relief_height), r = hole_radius + 1.35, $fn = 30);
-            translate([0, 0, -0.05])
-                cylinder(h = min(0.64, relief_height + 0.10), r = hole_radius + 0.20, $fn = 30);
+            linear_extrude(height = body_thickness)
+                rounded_square_2d(body_size, radius);
+            translate([hole_x, hole_y, -0.1])
+                cylinder(h = body_thickness + 0.25, r = hole_radius, $fn = 30);
         }
 
-    print_line(line_1, body_size / 2 + block_param(editor_params, "car", 0, 0), body_size * 0.58 + block_param(editor_params, "car", 1, 0), top_width, top_height, top_font, top_relief, body_thickness);
-    print_line(line_2, body_size / 2 + block_param(editor_params, "phone", 0, 0), body_size * 0.36 + block_param(editor_params, "phone", 1, 0), bottom_width, bottom_height, bottom_font, bottom_relief, body_thickness);
+    color(PREVIEW_RELIEF_COLOR)
+        translate([0, 0, body_thickness])
+            border(body_size, radius, 1.1, min(0.32, relief_height));
+
+    color(PREVIEW_RELIEF_COLOR)
+        translate([hole_x, hole_y, body_thickness])
+            difference() {
+                cylinder(h = min(0.54, relief_height), r = hole_radius + 1.35, $fn = 30);
+                translate([0, 0, -0.05])
+                    cylinder(h = min(0.64, relief_height + 0.10), r = hole_radius + 0.20, $fn = 30);
+            }
+
+    color(PREVIEW_RELIEF_COLOR) {
+        print_line(line_1, body_size / 2 + block_param(editor_params, "car", 0, 0), body_size * 0.58 + block_param(editor_params, "car", 1, 0), top_width, top_height, top_font, top_relief, body_thickness);
+        print_line(line_2, body_size / 2 + block_param(editor_params, "phone", 0, 0), body_size * 0.36 + block_param(editor_params, "phone", 1, 0), bottom_width, bottom_height, bottom_font, bottom_relief, body_thickness);
+    }
 }

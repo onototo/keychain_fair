@@ -10,6 +10,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         cura-engine \
         openscad \
+        xauth \
+        xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -18,6 +18,7 @@ from keychain_fair.main import create_app
 
 ADMIN_HEADERS = {"X-Admin-Pin": "9999"}
 CASHIER_HEADERS = {"X-Cashier-Pin": "9999"}
+INTERNAL_HEADERS = {"X-Internal-Token": "test-internal-token"}
 
 
 class FakeGenerator(OpenScadModelGenerator):
@@ -50,6 +51,15 @@ class FakeGenerator(OpenScadModelGenerator):
         stl.write_text("solid preview\nendsolid preview\n", encoding="utf-8")
         scad.write_text("// preview\n", encoding="utf-8")
         return AdapterResult(True, "fake preview", stl, {"wrapper_scad_path": str(scad)})
+
+    def render_order_preview_png(self, cache_key, order, design, image_size=(480, 320)):
+        preview_dir = self.settings.generated_dir / "telegram" / "previews" / cache_key
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        png = preview_dir / "preview.png"
+        scad = preview_dir / "preview.scad"
+        png.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        scad.write_text("// preview png\n", encoding="utf-8")
+        return AdapterResult(True, "fake preview png", png, {"wrapper_scad_path": str(scad)})
 
 
 class FakeSlicer(CuraEngineSlicer):

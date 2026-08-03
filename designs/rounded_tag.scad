@@ -9,6 +9,9 @@ function block_start(kind) = kind == "name" ? 7 : kind == "car" ? 13 : 19;
 function block_param(params, kind, offset, fallback) = ep(params, block_start(kind) + offset, fallback);
 function block_param_pos(params, kind, offset, fallback) =
     block_param(params, kind, offset, fallback) > 0 ? block_param(params, kind, offset, fallback) : fallback;
+TEXT_WIDTH_FACTOR = 0.82;
+PREVIEW_BASE_COLOR = "#2f7f77";
+PREVIEW_RELIEF_COLOR = "#f0b429";
 
 module oval_border(width, height, border_width, height_on_top) {
     linear_extrude(height = height_on_top) {
@@ -26,11 +29,12 @@ module print_line(label, x, y, font_size, relief, z) {
             text(label, size = max(0.1, font_size), halign = "center", valign = "center", font = "Liberation Sans:style=Bold");
 }
 
-module print_text_block(line_1, line_2, x, y, width, height, font_size, relief, z, line_spacing) {
+module print_text_block(line_1, line_2, x, y, width, height, font_size, relief, z, line_spacing, exact_fit) {
     max_line_len = line_2 != "" ? max(len(line_1), len(line_2)) : len(line_1);
     safe_spacing = min(1.8, max(0.7, line_spacing));
     height_limit = line_2 != "" ? height / (1 + safe_spacing) : height * 0.72;
-    fitted = min(font_size, min(width / max(1, max_line_len) * 1.35, height_limit));
+    width_limit = exact_fit > 0 ? font_size : width / max(1, max_line_len) * TEXT_WIDTH_FACTOR;
+    fitted = min(font_size, min(width_limit, height_limit));
     if (line_2 != "") {
         gap = fitted * safe_spacing;
         print_line(line_1, x, y + gap / 2, fitted, relief, z);
@@ -53,33 +57,39 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
     line_1_font = block_param_pos(editor_params, "car", 4, font_size);
     line_1_relief = block_param_pos(editor_params, "car", 5, relief_height);
     line_spacing = ep(editor_params, 26, 1.08);
+    text_exact_fit = ep(editor_params, 27, 0);
 
-    difference() {
-        linear_extrude(height = body_thickness) oval_2d(body_width, body_height);
-        translate([hole_x, hole_y, -0.1])
-            cylinder(h = body_thickness + 0.25, r = hole_radius, $fn = 32);
-    }
-
-    translate([0, 0, body_thickness])
-        oval_border(body_width, body_height, 1.25, min(0.34, relief_height));
-
-    translate([hole_x, hole_y, body_thickness])
+    color(PREVIEW_BASE_COLOR)
         difference() {
-            cylinder(h = min(0.60, relief_height), r = hole_radius + 1.65, $fn = 32);
-            translate([0, 0, -0.05])
-                cylinder(h = min(0.70, relief_height + 0.10), r = hole_radius + 0.22, $fn = 32);
+            linear_extrude(height = body_thickness) oval_2d(body_width, body_height);
+            translate([hole_x, hole_y, -0.1])
+                cylinder(h = body_thickness + 0.25, r = hole_radius, $fn = 32);
         }
 
-    print_text_block(
-        line_1,
-        line_2,
-        body_width / 2 + block_param(editor_params, "car", 0, 0),
-        body_height / 2 + block_param(editor_params, "car", 1, 0),
-        line_1_width,
-        line_1_height,
-        line_1_font,
-        line_1_relief,
-        body_thickness,
-        line_spacing
-    );
+    color(PREVIEW_RELIEF_COLOR)
+        translate([0, 0, body_thickness])
+            oval_border(body_width, body_height, 1.25, min(0.34, relief_height));
+
+    color(PREVIEW_RELIEF_COLOR)
+        translate([hole_x, hole_y, body_thickness])
+            difference() {
+                cylinder(h = min(0.60, relief_height), r = hole_radius + 1.65, $fn = 32);
+                translate([0, 0, -0.05])
+                    cylinder(h = min(0.70, relief_height + 0.10), r = hole_radius + 0.22, $fn = 32);
+            }
+
+    color(PREVIEW_RELIEF_COLOR)
+        print_text_block(
+            line_1,
+            line_2,
+            body_width / 2 + block_param(editor_params, "car", 0, 0),
+            body_height / 2 + block_param(editor_params, "car", 1, 0),
+            line_1_width,
+            line_1_height,
+            line_1_font,
+            line_1_relief,
+            body_thickness,
+            line_spacing,
+            text_exact_fit
+        );
 }
