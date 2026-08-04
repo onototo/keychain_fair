@@ -116,6 +116,15 @@ class PaymentStatusUpdate(BaseModel):
         return value
 
 
+class BlankPrintRequest(BaseModel):
+    target_count: int | None = Field(default=None, ge=1)
+
+
+class BlankSlotUpdate(BaseModel):
+    state_code: int | None = Field(default=None, ge=1, le=7)
+    print_enabled: bool | None = None
+
+
 class ApiMessage(BaseModel):
     ok: bool
     message: str

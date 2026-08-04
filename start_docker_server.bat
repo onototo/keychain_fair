@@ -6,6 +6,21 @@ set "PUBLIC_URL="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Get-KeychainLanUrl.ps1" -Port 8120`) do set "PUBLIC_URL=%%I"
 if not defined PUBLIC_URL set "PUBLIC_URL=http://127.0.0.1:8120"
 
+echo.
+echo Select blank size for this server start:
+echo   1 - compact  (56x24 mm, up to 18 blanks)
+echo   2 - standard (64x30 mm, up to 10 blanks)
+choice /c 12 /n /m "Enter 1 or 2: "
+if errorlevel 2 (
+  set "BLANK_SIZE_ID=standard"
+  set "BLANK_SIZE_LABEL=standard"
+) else (
+  set "BLANK_SIZE_ID=compact"
+  set "BLANK_SIZE_LABEL=compact"
+)
+echo Blank size: %BLANK_SIZE_LABEL%
+echo.
+
 set "DOCKER_PATH="
 for /f "delims=" %%I in ('where docker 2^>nul') do (
   if not defined DOCKER_PATH set "DOCKER_PATH=%%I"

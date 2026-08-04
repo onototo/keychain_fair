@@ -14,6 +14,21 @@ set "PUBLIC_URL="
 if not defined OCTOPRINT_LOCAL_BASE_URL set "OCTOPRINT_LOCAL_BASE_URL=http://127.0.0.1:5000"
 set "OCTOPRINT_BASE_URL=%OCTOPRINT_LOCAL_BASE_URL%"
 
+echo.
+echo Select blank size for this server start:
+echo   1 - compact  (56x24 mm, up to 18 blanks)
+echo   2 - standard (64x30 mm, up to 10 blanks)
+choice /c 12 /n /m "Enter 1 or 2: "
+if errorlevel 2 (
+  set "BLANK_SIZE_ID=standard"
+  set "BLANK_SIZE_LABEL=standard"
+) else (
+  set "BLANK_SIZE_ID=compact"
+  set "BLANK_SIZE_LABEL=compact"
+)
+echo Blank size: %BLANK_SIZE_LABEL%
+echo.
+
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\Get-KeychainLanUrl.ps1" -Port 8120`) do set "PUBLIC_URL=%%I"
 if not defined PUBLIC_URL set "PUBLIC_URL=http://127.0.0.1:8120"
 
@@ -33,6 +48,7 @@ if "%PORT_STATUS%"=="2" set "SERVER_ALREADY_RUNNING=1"
 if errorlevel 1 exit /b %ERRORLEVEL%
 
 if "%SERVER_ALREADY_RUNNING%"=="1" (
+  echo Server is already running; selected blank size was not applied.
   echo Site:  %PUBLIC_URL%/
   echo Admin: %PUBLIC_URL%/admin
   exit /b 0

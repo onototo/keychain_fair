@@ -34,23 +34,15 @@ cura_engine:
     machine_start_gcode: |
       ; Start heating before any movement
       M140 S60
-      M104 S205
+      ; Wait 5C above print target so firmware releases near 205C, not around 195C
+      M104 S210
       M190 S55
-      M109 S200
+      M109 S210
       M140 S60
       M104 S205
-      ; Home only after bed and hotend are within 5C of target
+      ; Home after bed and hotend are ready
       G90
       G28
-      ; Prime nozzle along the left edge of the bed
-      G1 Z2.0 F3000
-      G1 X2.0 Y10.0 F5000
-      G1 Z0.28 F3000
-      G92 E0
-      G1 X2.0 Y200.0 E15 F1200
-      G1 X2.4 Y200.0 F5000
-      G1 X2.4 Y10.0 E30 F1200
-      G92 E0
       G1 Z2.0 F3000
     machine_end_gcode: |
       M104 S0
@@ -62,7 +54,7 @@ cura_engine:
       G1 X0 Y220 F3000
       M84
     adhesion_type: brim
-    brim_width: 2.8
+    brim_width: 1.2
     layer_height: 0.2
     layer_height_0: 0.1
     line_width: 0.4

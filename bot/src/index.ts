@@ -73,6 +73,21 @@ async function beginNewOrder(ctx: Context): Promise<void> {
   if (!designs) return;
 
   const session = createDraftSession();
+  if (designs.length === 1) {
+    const design = designs[0];
+    applyDesignDefaults(session, design);
+    if (design.sizes.length === 1) {
+      session.data.sizeId = design.sizes[0].id;
+      if (isCustomTextDesign(design)) {
+        await askPrintText(ctx, session, design);
+        return;
+      }
+      await askName(ctx, session);
+      return;
+    }
+    await showSizes(ctx, session, design);
+    return;
+  }
   await showDesignPicker(ctx, session, designs, "Выберите дизайн брелка.");
 }
 
@@ -193,23 +208,6 @@ async function showConfirmation(ctx: Context, session: DraftSession, design: Des
     console.warn(error);
   }
 
-  const previewUrl = api.previewUrl(design);
-
-  if (previewUrl) {
-    try {
-      const response = await fetch(previewUrl);
-      if (!response.ok) throw new Error(`Preview request failed: ${response.status}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      await ctx.replyWithPhoto(new InputFile(buffer, `${design.id}.png`), {
-        caption,
-        reply_markup: keyboard,
-      });
-      return;
-    } catch (error) {
-      console.warn(error);
-    }
-  }
-
   await ctx.reply(caption, { reply_markup: keyboard });
 }
 
@@ -217,10 +215,18 @@ async function showEditMenu(ctx: Context, session: DraftSession, design: Design)
   session.step = "confirm";
   session.editing = false;
 
-  const keyboard = new InlineKeyboard()
-    .text("Дизайн", "edit:design")
-    .text("Размер", "edit:size")
-    .row();
+  const keyboard = new InlineKeyboard();
+  const designs = await designsOrReply(ctx);
+  if (!designs) return;
+  if (designs.length > 1) {
+    keyboard.text("Дизайн", "edit:design");
+  }
+  if (design.sizes.length > 1) {
+    keyboard.text("Размер", "edit:size");
+  }
+  if (designs.length > 1 || design.sizes.length > 1) {
+    keyboard.row();
+  }
 
   if (contentElements(design).length > 0) {
     keyboard.text("Элементы", "edit:elements").row();
@@ -438,7 +444,8 @@ bot.callbackQuery("confirm", async (ctx) => {
     const payload = buildOrderPayload(current.session.data, current.session.draftId, telegramMeta(ctx));
     const result = await api.createOrder(payload);
     await sessions.clear(chatId(ctx));
-    await ctx.reply(`Заказ ${result.order.id} создан и передан администратору. Можете пройти на оплату.`, { reply_markup: mainKeyboard() });
+    const orderLabel = result.order.order_number ? `#${result.order.order_number}` : result.order.id;
+    await ctx.reply(`Заказ ${orderLabel} создан и передан администратору. Можете пройти на оплату.`, { reply_markup: mainKeyboard() });
   } catch (error) {
     await ctx.reply(`Не получилось создать заказ: ${(error as Error).message}`);
   }

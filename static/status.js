@@ -23,6 +23,7 @@ async function refresh() {
   }
 
   const order = result.order;
+  orderIdNode.textContent = order.order_number ? `Заказ #${order.order_number}` : orderId;
   statusLabel.textContent = order.status_label;
   updatedAt.textContent = formatDate(order.updated_at);
   customer.textContent = order.customer_name;

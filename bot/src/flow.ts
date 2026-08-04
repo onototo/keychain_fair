@@ -101,14 +101,21 @@ export function buildOrderPayload(data: DraftData, draftId: string, user: Telegr
 export function orderSummary(design: Design, data: DraftData): string {
   const size = design.sizes.find((item) => item.id === data.sizeId);
   const printText = data.printLine1 || "";
-  const price = size?.price ? `\nЦена: ${size.price} BYN` : "";
-  const car = data.carNumber ? `\nАвто: ${data.carNumber}` : "";
-  const custom = printText ? `\nПечать: ${printText}` : "";
-  return [
-    "Проверьте заказ:",
-    `Дизайн: ${design.name}`,
-    `Размер: ${size?.label || data.sizeId}`,
-    `Имя: ${data.customerName || ""}`,
-    `${car || custom || price ? `${car}${custom}${price}`.trimStart() : "Авто: -"}`,
-  ].join("\n");
+  const rows = ["Проверьте заказ:"];
+
+  if (printText) {
+    rows.push(`Текст на брелоке: ${printText}`);
+  } else {
+    rows.push(data.carNumber ? `Авто: ${data.carNumber}` : "Авто: -");
+  }
+
+  rows.push(`Имя: ${data.customerName || ""}`);
+  if (size?.label) {
+    rows.push(`Размер: ${size.label}`);
+  }
+  if (size?.price) {
+    rows.push(`Цена: ${size.price} BYN`);
+  }
+
+  return rows.join("\n");
 }

@@ -8,7 +8,7 @@
   "accent": "#f0b429",
   "preview_image": "03_custom_rectangular.png",
   "default_elements": [],
-  "default_size_id": "standard",
+  "default_size_id": "compact",
   "sizes": [
     {
       "id": "compact",
@@ -81,7 +81,7 @@
         "text_exact_fit": 0.0,
         "hole": {
           "x_mm": 4.0,
-          "y_mm": 25.5,
+          "y_mm": 26.0,
           "radius_mm": 2.35
         },
         "text_blocks": {
@@ -94,8 +94,8 @@
             "relief_height_mm": 0.8
           },
           "car": {
-            "x_offset_mm": 1.0,
-            "y_offset_mm": -1.0,
+            "x_offset_mm": 1.5,
+            "y_offset_mm": -2.5,
             "box_width_mm": 52.0,
             "box_height_mm": 18.0,
             "font_size_mm": 7.0,

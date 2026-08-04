@@ -37,11 +37,21 @@ async function api(path, options = {}) {
       ...(options.headers || {}),
     },
   });
-  const result = await response.json();
+  const contentType = response.headers.get("Content-Type") || "";
+  const rawText = await response.text();
+  let result = {};
+  if (rawText && contentType.includes("application/json")) {
+    try {
+      result = JSON.parse(rawText);
+    } catch (_error) {
+      result = {};
+    }
+  }
   if (!response.ok) {
     const detail = result.detail;
+    const fallback = rawText.trim() || `HTTP ${response.status}`;
     throw new ApiError(
-      typeof detail === "string" ? detail : detail?.message || "Ошибка запроса",
+      typeof detail === "string" ? detail : detail?.message || fallback,
       response.status,
       detail?.retry_after_seconds || null,
     );
@@ -57,6 +67,10 @@ function formatPrice(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "";
   return `${number.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} BYN`;
+}
+
+function orderNumberLabel(order) {
+  return order?.order_number ? `#${order.order_number}` : "#---";
 }
 
 function escapeHtml(value) {
@@ -98,7 +112,10 @@ function orderCard(order) {
   const card = document.createElement("article");
   card.className = `cashier-order ${paid ? "is-paid" : "is-unpaid"}`;
   card.innerHTML = `
-    <div class="cashier-order-time">${formatTime(order.created_at)}</div>
+    <div class="cashier-order-time">
+      <span>${escapeHtml(orderNumberLabel(order))}</span>
+      <small>${formatTime(order.created_at)}</small>
+    </div>
     <div class="cashier-order-main">
       <h2>${escapeHtml(order.customer_name)}</h2>
       <div>${escapeHtml(order.car_number || "Без номера авто")}</div>

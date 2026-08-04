@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Панель оператора</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260711-qr-hotspot" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260803-admin-orders-text" />
   </head>
   <body>
     <main id="login" class="login panel">
@@ -27,16 +27,31 @@
           <h1>Заказы</h1>
           <span id="toolStatus" class="muted"></span>
         </div>
-        <div class="toolbar">
-          <a class="button-link secondary" href="/editor">3D редактор</a>
-          <button id="downloadStats" class="secondary">Скачать статистику</button>
-          <button id="prepareQueue">Подготовить стол</button>
-          <button id="printBatch" class="danger" disabled>Запустить печать</button>
-          <button id="heatBed" class="secondary" disabled>Разогреть стол и хотэнд</button>
-          <button id="coolBed" class="secondary" disabled>Отключить нагрев</button>
-          <button id="resumePrint" class="secondary" disabled>Продолжить печать</button>
-          <button id="stopPrint" class="danger" disabled>Стоп</button>
-          <button id="logout" class="secondary">Выйти</button>
+        <div class="toolbar admin-toolbar">
+          <div class="action-group action-group-utility">
+            <span class="action-group-label">Панель</span>
+            <a class="button-link pastel-lilac" href="/editor">3D редактор</a>
+            <button id="downloadStats" class="pastel-blue">Статистика</button>
+            <button id="logout" class="pastel-gray">Выйти</button>
+          </div>
+          <div class="action-group action-group-production">
+            <span class="action-group-label">Производство</span>
+            <label class="blank-print-control">
+              <span>Напечатать</span>
+              <input id="blankTargetCount" type="number" min="1" step="1" value="18" inputmode="numeric" />
+              <span>заготовок</span>
+            </label>
+            <button id="printBlanks" class="pastel-mint">Напечатать</button>
+            <button id="prepareQueue" class="pastel-sky">Подготовить стол</button>
+            <button id="printBatch" class="pastel-green" disabled>Запустить очередь</button>
+          </div>
+          <div class="action-group action-group-printer">
+            <span class="action-group-label">Принтер</span>
+            <button id="heatBed" class="pastel-peach" disabled>Разогреть</button>
+            <button id="coolBed" class="pastel-ice" disabled>Отключить нагрев</button>
+            <button id="resumePrint" class="pastel-yellow" disabled>Продолжить</button>
+            <button id="stopPrint" class="pastel-rose" disabled>Стоп</button>
+          </div>
         </div>
       </header>
 
@@ -64,11 +79,11 @@
               <table class="orders-table">
                 <thead>
                   <tr>
+                    <th>№</th>
                     <th>Source</th>
                     <th>Время</th>
                     <th>Имя</th>
-                    <th>Авто</th>
-                    <th>Дизайн</th>
+                    <th class="order-text-heading">Текст</th>
                     <th>Статус</th>
                     <th></th>
                   </tr>
@@ -108,18 +123,23 @@
                 <strong>Order</strong>
                 <div id="siteUrl" class="small muted"></div>
               </div>
-              <div class="qr-item">
-                <img id="adminQr" class="qr" alt="Admin QR" />
+              <div class="qr-item qr-item-admin">
+                <div class="qr-spoiler-wrap" id="adminQrSpoilerWrap" data-hidden="true">
+                  <img id="adminQr" class="qr" alt="Admin QR" />
+                  <button id="adminQrSpoiler" class="qr-spoiler-cover" type="button" aria-label="Показать QR админ панели" aria-pressed="false">
+                    <span class="eye-off-icon" aria-hidden="true"></span>
+                    <span>Показать</span>
+                  </button>
+                </div>
                 <strong>Admin</strong>
                 <div id="adminUrl" class="small muted"></div>
               </div>
             </div>
-            <div id="addresses" class="small muted"></div>
           </div>
         </aside>
       </section>
     </main>
 
-    <script src="/static/admin.js?v=20260717-order-preview"></script>
+    <script src="/static/admin.js?v=20260803-admin-orders-text"></script>
   </body>
 </html>

@@ -87,7 +87,7 @@ function setViewerMessage(message) {
 }
 
 function setSummary(order) {
-  orderTitle.textContent = `3D предпросмотр ${order.id}`;
+  orderTitle.textContent = `3D предпросмотр ${order.order_number ? `#${order.order_number}` : order.id}`;
   orderMeta.textContent = `${order.design_name} · ${order.size_label}`;
   summary.customer.textContent = order.customer_name || "--";
   summary.car.textContent = order.car_number || "--";

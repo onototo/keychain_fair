@@ -172,6 +172,10 @@ function validateFields() {
 
 function renderDesigns() {
   designsNode.innerHTML = "";
+  const designSection = designsNode.parentElement;
+  if (designSection) {
+    designSection.hidden = state.designs.length <= 1;
+  }
   state.designs.forEach((design) => {
     const node = document.createElement("button");
     node.type = "button";
@@ -196,6 +200,10 @@ function renderOptions() {
   if (!design) return;
 
   sizeSelect.innerHTML = "";
+  const sizeField = sizeSelect.closest("label");
+  if (sizeField) {
+    sizeField.hidden = design.sizes.length <= 1;
+  }
   design.sizes.forEach((size) => {
     const option = document.createElement("option");
     option.value = size.id;

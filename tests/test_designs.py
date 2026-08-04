@@ -6,22 +6,14 @@ def test_design_catalog_loads_templates():
     catalog = DesignCatalog(PROJECT_ROOT / "designs")
     designs = catalog.load_designs()
 
-    assert [item["id"] for item in designs] == ["stacked_plate_classic", "square_plate", "classic_plate", "rounded_tag"]
-    assert [item["name"] for item in designs] == [
-        "Прямоугольный номер",
-        "Квадратный номер",
-        "Кастомный прямоугольный",
-        "Кастомный овальный",
-    ]
+    assert [item["id"] for item in designs] == ["classic_plate"]
+    assert [item["name"] for item in designs] == ["Кастомный прямоугольный"]
+    assert [size["id"] for size in designs[0]["sizes"]] == ["compact", "standard", "large"]
+    assert designs[0]["default_size_id"] == "compact"
     assert all(item["template_available"] for item in designs)
     assert all(item["preview_image"].startswith("/static/design-previews/") for item in designs)
     assert all((PROJECT_ROOT / item["preview_image"].lstrip("/")).exists() for item in designs)
-    assert [item["preview_image"].split("/")[-1] for item in designs] == [
-        "01_rectangular_number.png",
-        "02_square_number.png",
-        "03_custom_rectangular.png",
-        "04_custom_oval.png",
-    ]
+    assert [item["preview_image"].split("/")[-1] for item in designs] == ["03_custom_rectangular.png"]
 
 
 def test_selection_rejects_removed_elements():
@@ -47,7 +39,5 @@ def test_custom_designs_expose_text_limits():
     designs = {item["id"]: item for item in catalog.load_public_designs()}
 
     rectangular = [size["custom_text_limits"]["max_total_chars"] for size in designs["classic_plate"]["sizes"]]
-    oval = [size["custom_text_limits"]["max_total_chars"] for size in designs["rounded_tag"]["sizes"]]
 
-    assert rectangular == [22, 24, 30]
-    assert oval == [16, 24, 26]
+    assert rectangular == [24, 28, 38]

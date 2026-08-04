@@ -3,7 +3,15 @@ from pathlib import Path
 import subprocess
 import struct
 
-from keychain_fair.adapters import AdapterResult, CuraEngineSlicer, OctoPrintController, OpenScadModelGenerator
+import yaml
+
+from keychain_fair.adapters import (
+    AdapterResult,
+    CuraEngineSlicer,
+    OctoPrintController,
+    OpenScadModelGenerator,
+    OverlaySafetySpec,
+)
 from keychain_fair.config import PROJECT_ROOT
 from tests.support import make_settings
 
@@ -29,6 +37,17 @@ def make_cura_settings(tmp_path, profile_lines, base_height_mm=3.2):
         tools=replace(settings.tools, cura_engine_path=str(fake_exe)),
         slicer=replace(settings.slicer, profile_path=profile),
     )
+
+
+def test_ender3_profile_uses_three_line_brim_without_switching_to_skirt():
+    profile = yaml.safe_load((PROJECT_ROOT / "config" / "slicer.ender3.yaml").read_text(encoding="utf-8"))
+    settings = profile["cura_engine"]["settings"]
+
+    assert settings["adhesion_type"] == "brim"
+    assert settings["brim_width"] == 1.2
+    assert settings["skirt_line_count"] == 0
+    assert settings["material_print_temperature"] == 205
+    assert settings["material_print_temperature_layer_0"] == 205
 
 
 def test_cura_slicer_uses_profile_and_repairs_header(tmp_path, monkeypatch):
@@ -203,6 +222,86 @@ def test_cura_slicer_uses_explicit_filament_change_height(tmp_path, monkeypatch)
     pause_index = lines.index("@pause Change filament at Z=4.70 mm")
     assert lines.index("G1 X3 Y3 E3") < pause_index < lines.index("G0 X0 Y0 Z4.9")
     assert "@pause Change filament at Z=1.90 mm" not in lines
+
+
+def test_overlay_postprocess_removes_startup_prime_and_keeps_safe_clearance(tmp_path):
+    safety = OverlaySafetySpec(
+        base_thickness_mm=2.1,
+        relief_height_mm=0.8,
+        safety_clearance_mm=2.0,
+        slot_x_mm=8.0,
+        slot_y_mm=8.0,
+        slot_width_mm=64.0,
+        slot_height_mm=30.0,
+        bed_size_mm=(220.0, 220.0),
+    )
+    gcode = tmp_path / "overlay.gcode"
+    gcode.write_text(
+        "\n".join(
+            [
+                "M82",
+                "G28",
+                "G0 Z0.2",
+                "G1 X180 Y0 E3.0 ; prime line",
+                "G0 X20 Y20",
+                "G1 X30 Y20 E4.0",
+                "M104 S0",
+                "M140 S0",
+                "M84",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    slicer = CuraEngineSlicer(make_settings(tmp_path))
+    slicer._postprocess_overlay_gcode(gcode, safety)
+    text = gcode.read_text(encoding="utf-8")
+    analysis = slicer.analyze_overlay_gcode(gcode, safety)
+
+    assert analysis.success is True
+    assert "prime line" not in "\n".join(line for line in text.splitlines() if not line.startswith("; skipped"))
+    assert "M104 S0" not in text
+    assert "M140 S0" not in text
+    assert "M84" not in text
+    assert "G28" not in "\n".join(line for line in text.splitlines() if not line.startswith("; skipped"))
+    assert "G0 X20 Y20 Z4.9" in text
+
+
+def test_overlay_collision_analyzer_rejects_low_travel_and_out_of_slot_extrusion(tmp_path):
+    safety = OverlaySafetySpec(
+        base_thickness_mm=2.1,
+        relief_height_mm=0.8,
+        safety_clearance_mm=2.0,
+        slot_x_mm=8.0,
+        slot_y_mm=8.0,
+        slot_width_mm=64.0,
+        slot_height_mm=30.0,
+        bed_size_mm=(220.0, 220.0),
+    )
+    gcode = tmp_path / "unsafe_overlay.gcode"
+    gcode.write_text(
+        "\n".join(
+            [
+                "M82",
+                "M104 S0",
+                "G0 Z2.3",
+                "G0 X80 Y20",
+                "G1 X80 Y20 Z1.9 E1.0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CuraEngineSlicer(make_settings(tmp_path)).analyze_overlay_gcode(gcode, safety)
+    failures = " | ".join(result.extra["failures"])
+
+    assert result.success is False
+    assert "hotend shutdown" in failures
+    assert "travel move below safe Z" in failures
+    assert "extrusion below blank surface" in failures
+    assert "extrusion outside slot bounds" in failures
 
 
 def test_openscad_model_scale_keeps_z_thickness(tmp_path, monkeypatch):

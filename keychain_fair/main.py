@@ -13,7 +13,7 @@ from typing import Any
 import uuid
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .adapters import AdapterResult, CuraEngineSlicer, NullNotifier, OctoPrintController, OpenScadModelGenerator
@@ -28,7 +28,7 @@ from .editor import (
     preview_order_payload,
     save_design_preset,
 )
-from .models import InternalOrderCreate, OrderCreate, PaymentStatusUpdate, StatusUpdate
+from .models import BlankPrintRequest, BlankSlotUpdate, InternalOrderCreate, OrderCreate, PaymentStatusUpdate, StatusUpdate
 from .network import local_ipv4_addresses, qr_data_uri, wifi_qr_payload
 from .services import OrderBlockedError, OrderService
 from .statistics import XLSX_MEDIA_TYPE, build_statistics_workbook
@@ -295,6 +295,11 @@ def create_app(
     static_dir = app_settings.base_dir / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    @app.exception_handler(Exception)
+    async def unhandled_exception_json(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled error during %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
     def admin_attempt_key(request: Request) -> str:
         return request.client.host if request.client else "unknown"
 
@@ -552,6 +557,7 @@ def create_app(
             "text_layout": (result.extra or {}).get("text_layout") or custom_text_layout_for_order(order, design),
             "order": {
                 "id": order["id"],
+                "order_number": order.get("order_number") or "",
                 "customer_name": order["customer_name"],
                 "car_number": order["car_number"],
                 "print_line_1": order["print_line_1"],
@@ -573,9 +579,26 @@ def create_app(
     @app.post("/api/admin/print-queue/run", dependencies=[Depends(require_admin)])
     def admin_run_queue() -> dict[str, Any]:
         try:
-            return service.prepare_queue()
+            return service.run_overlay_queue()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/admin/blanks/print", dependencies=[Depends(require_admin)])
+    def admin_print_blanks(payload: BlankPrintRequest | None = None) -> dict[str, Any]:
+        try:
+            return service.print_blank_batch(payload.target_count if payload else None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/admin/blanks/{blank_batch_id}/slots/{slot_index}", dependencies=[Depends(require_admin)])
+    def admin_update_blank_slot(blank_batch_id: str, slot_index: int, payload: BlankSlotUpdate) -> dict[str, Any]:
+        try:
+            batch = service.set_blank_slot_state(blank_batch_id, slot_index, payload.state_code, payload.print_enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Blank slot not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"batch": batch, "blank_preview": service.blank_table_preview()}
 
     @app.post("/api/admin/batches/{batch_id}/print", dependencies=[Depends(require_admin)])
     def admin_print_batch(batch_id: str) -> dict[str, Any]:
@@ -616,7 +639,11 @@ def create_app(
 
     @app.get("/api/admin/batches", dependencies=[Depends(require_admin)])
     def admin_batches() -> dict[str, Any]:
-        return {"bed_size_mm": app_settings.queue.bed_size_mm, "batches": database.list_batches()}
+        return {
+            "bed_size_mm": app_settings.queue.bed_size_mm,
+            "batches": database.list_batches(),
+            "blank_preview": service.blank_table_preview(),
+        }
 
     @app.get("/api/admin/tools", dependencies=[Depends(require_admin)])
     def admin_tools() -> dict[str, Any]:
@@ -695,6 +722,7 @@ def create_app(
     def admin_printer_status() -> dict[str, Any]:
         payload = _printer_status_payload(print_controller)
         payload["completed_prints"] = service.complete_printing_batches_if_done(payload)
+        payload["overlay_autorun"] = service.start_next_overlay_if_ready()
         return payload
 
     @app.get("/api/system/info")

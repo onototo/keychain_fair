@@ -31,6 +31,10 @@ const sampleInputs = {
   customer_name: document.querySelector("#sampleName"),
   car_number: document.querySelector("#sampleCar"),
 };
+const SAMPLE_TEXT_MAX_LENGTH = 28;
+if (sampleInputs.car_number) {
+  sampleInputs.car_number.maxLength = SAMPLE_TEXT_MAX_LENGTH;
+}
 
 const baseInputs = {
   base_width_mm: document.querySelector("#baseWidth"),
@@ -392,10 +396,11 @@ function previewElements() {
 }
 
 function sampleText() {
+  const printText = (sampleInputs.car_number.value || "1234AB7").slice(0, SAMPLE_TEXT_MAX_LENGTH);
   return {
     customer_name: sampleInputs.customer_name.value || "Nikita",
-    car_number: sampleInputs.car_number.value || "1234AB7",
-    print_line_1: sampleInputs.car_number.value || "1234AB7",
+    car_number: printText,
+    print_line_1: printText,
     print_line_2: "",
   };
 }

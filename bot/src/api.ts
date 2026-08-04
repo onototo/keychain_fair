@@ -11,7 +11,7 @@ export class KeychainApi {
     return payload.designs || [];
   }
 
-  async createOrder(payload: OrderPayload): Promise<{ order: { id: string; status: string } }> {
+  async createOrder(payload: OrderPayload): Promise<{ order: { id: string; order_number?: string; status: string } }> {
     return this.requestJson("/api/internal/orders", {
       method: "POST",
       headers: {
@@ -36,12 +36,6 @@ export class KeychainApi {
       throw new Error(apiErrorMessage(errorPayload, response.status));
     }
     return Buffer.from(await response.arrayBuffer());
-  }
-
-  previewUrl(design: Design): string | null {
-    if (!design.preview_image) return null;
-    if (/^https?:\/\//i.test(design.preview_image)) return design.preview_image;
-    return `${this.apiBaseUrl}${design.preview_image.startsWith("/") ? "" : "/"}${design.preview_image}`;
   }
 
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {

@@ -2,6 +2,9 @@
 setlocal
 cd /d "%~dp0"
 
+call "%~dp0stop_server.bat"
+if errorlevel 1 exit /b %ERRORLEVEL%
+
 set "DOCKER_PATH="
 for /f "delims=" %%I in ('where docker 2^>nul') do (
   if not defined DOCKER_PATH set "DOCKER_PATH=%%I"

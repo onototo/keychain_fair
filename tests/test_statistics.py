@@ -117,5 +117,7 @@ def test_admin_statistics_xlsx_requires_pin_and_contains_expected_sheets(tmp_pat
 
     assert any(ready_id in row for row in orders_rows)
     assert any(unpaid_id in row for row in orders_rows)
+    assert ["Order #", "ID"] == orders_rows[0][:2]
+    assert {"001", "002"} <= {row[0] for row in orders_rows[1:]}
     assert model_rows[1][2] == "2"
     assert len(hour_rows) == 3

@@ -47,7 +47,7 @@ module print_text_block(line_1, line_2, x, y, width, height, font_size, relief, 
     }
 }
 
-module keychain(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params = []) {
+module keychain_blank(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params = []) {
     body_width = ep(editor_params, 0, plate_width);
     body_height = ep(editor_params, 1, plate_height);
     body_thickness = ep(editor_params, 2, plate_thickness);
@@ -56,12 +56,7 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
     hole_x = ep(editor_params, 4, 6.5);
     hole_y = ep(editor_params, 5, max(6.5, body_height - 6.5));
     hole_radius = ep(editor_params, 6, 2.35);
-    line_1_width = block_param_pos(editor_params, "car", 2, body_width - 22);
-    line_1_height = block_param_pos(editor_params, "car", 3, body_height * 0.34);
-    line_1_font = block_param_pos(editor_params, "car", 4, font_size);
     line_1_relief = block_param_pos(editor_params, "car", 5, relief_height);
-    line_spacing = ep(editor_params, 26, 1.08);
-    text_exact_fit = ep(editor_params, 27, 0);
 
     color(PREVIEW_BASE_COLOR)
         difference() {
@@ -82,6 +77,18 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
                 translate([0, 0, -0.05])
                     cylinder(h = min(0.70, relief_height + 0.10), r = hole_radius + 0.22, $fn = 32);
             }
+}
+
+module keychain_overlay(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params = []) {
+    body_width = ep(editor_params, 0, plate_width);
+    body_height = ep(editor_params, 1, plate_height);
+    relief_height = ep(editor_params, 3, 0.8);
+    line_1_width = block_param_pos(editor_params, "car", 2, body_width - 22);
+    line_1_height = block_param_pos(editor_params, "car", 3, body_height * 0.34);
+    line_1_font = block_param_pos(editor_params, "car", 4, font_size);
+    line_1_relief = block_param_pos(editor_params, "car", 5, relief_height);
+    line_spacing = ep(editor_params, 26, 1.08);
+    text_exact_fit = ep(editor_params, 27, 0);
 
     color(PREVIEW_RELIEF_COLOR)
         print_text_block(
@@ -93,8 +100,15 @@ module keychain(customer_name, line_1, line_2, selected_elements, plate_width, p
             line_1_height,
             line_1_font,
             line_1_relief,
-            body_thickness,
+            0,
             line_spacing,
             text_exact_fit
         );
+}
+
+module keychain(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params = []) {
+    body_thickness = ep(editor_params, 2, plate_thickness);
+    keychain_blank(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params);
+    translate([0, 0, body_thickness])
+        keychain_overlay(customer_name, line_1, line_2, selected_elements, plate_width, plate_height, plate_thickness, font_size, editor_params);
 }

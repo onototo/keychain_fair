@@ -22,6 +22,7 @@ services:
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:8120}
       SLICER_ENABLED: ${SLICER_ENABLED:-false}
+      BLANK_SIZE_ID: ${BLANK_SIZE_ID:-compact}
       OCTOPRINT_ENABLED: ${OCTOPRINT_ENABLED:-false}
       OCTOPRINT_BASE_URL: ${OCTOPRINT_BASE_URL:-http://host.docker.internal:5000}
       OCTOPRINT_API_KEY: ${OCTOPRINT_API_KEY:-}

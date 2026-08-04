@@ -12,6 +12,7 @@ queue:
   max_wait_minutes: 10
   bed_size_mm: [220, 220]
   item_spacing_mm: 8
+  blank_size_id: compact
 
 worker:
   poll_seconds: 3

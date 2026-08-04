@@ -117,7 +117,7 @@ def test_model_editor_designs_returns_editable_params(tmp_path):
 
     assert response.status_code == 200
     designs = response.json()["designs"]
-    assert [design["id"] for design in designs] == ["stacked_plate_classic", "square_plate", "classic_plate", "rounded_tag"]
+    assert [design["id"] for design in designs] == ["classic_plate"]
     for design in designs:
         for size in design["sizes"]:
             params = size["editor_params"]
@@ -257,7 +257,7 @@ def test_admin_order_preview_3d_creates_authenticated_stl(tmp_path):
     assert payload["preview_id"].startswith("prv_order_")
     assert payload["order"]["id"] == order_id
     assert payload["order"]["print_line_1"] == "Hello"
-    assert payload["bounds"]["width"] == 64
+    assert payload["bounds"]["width"] == 56
     assert payload["filament_change_height_mm"] == 2.1
     assert stl_response.status_code == 200
     assert b"solid preview" in stl_response.content
@@ -289,7 +289,7 @@ def test_admin_order_preview_3d_uses_order_model_params_snapshot(tmp_path):
 
         designs = client.get("/api/admin/model-editor/designs", headers=ADMIN_HEADERS).json()["designs"]
         design = next(item for item in designs if item["id"] == "classic_plate")
-        size = next(item for item in design["sizes"] if item["id"] == "standard")
+        size = next(item for item in design["sizes"] if item["id"] == "compact")
         params = size["editor_params"]
         params["base_width_mm"] = snapshot["base_width_mm"] + 20
         params["thickness_mm"] = 4.9
@@ -317,7 +317,7 @@ def test_admin_order_preview_3d_uses_order_custom_text_lines(tmp_path):
         order_response = client.post(
             "/api/orders",
             json=order_payload(
-                design_id="rounded_tag",
+                design_id="classic_plate",
                 size_id="standard",
                 print_line_1="1234 AB-7",
                 print_line_2="+375291234567",
@@ -375,7 +375,7 @@ def test_internal_order_preview_png_uses_normalized_custom_text(tmp_path):
             "/api/internal/order-preview/render.png",
             headers=INTERNAL_HEADERS,
             json=order_payload(
-                design_id="rounded_tag",
+                design_id="classic_plate",
                 size_id="standard",
                 print_line_1="1234 AB-7",
                 print_line_2="+375291234567",
@@ -388,6 +388,48 @@ def test_internal_order_preview_png_uses_normalized_custom_text(tmp_path):
     assert recorded_order["print_line_1"] == "1234 AB-7 +375291234567"
     assert recorded_order["print_line_2"] == ""
     assert generator.png_orders[-1]["image_size"] == (480, 320)
+
+
+def test_internal_order_preview_png_recalculates_model_for_selected_size(tmp_path):
+    settings = make_settings(tmp_path)
+    generator = RecordingPngGenerator(settings)
+    app = create_test_app(settings, generator=generator)
+
+    with TestClient(app) as client:
+        compact = client.post(
+            "/api/internal/order-preview/render.png",
+            headers=INTERNAL_HEADERS,
+            json=order_payload(
+                design_id="classic_plate",
+                size_id="compact",
+                print_line_1="SIZE CHECK",
+                idempotency_key="telegram-preview-compact-size",
+            ),
+        )
+        medium = client.post(
+            "/api/internal/order-preview/render.png",
+            headers=INTERNAL_HEADERS,
+            json=order_payload(
+                design_id="classic_plate",
+                size_id="standard",
+                print_line_1="SIZE CHECK",
+                idempotency_key="telegram-preview-medium-size",
+            ),
+        )
+
+    compact_order = generator.png_orders[-2]["order"]
+    medium_order = generator.png_orders[-1]["order"]
+
+    assert compact.status_code == 200
+    assert medium.status_code == 200
+    assert compact_order["size_id"] == "compact"
+    assert compact_order["width_mm"] == 56.0
+    assert compact_order["height_mm"] == 24.0
+    assert compact_order["model_params"]["base_width_mm"] == 56.0
+    assert medium_order["size_id"] == "standard"
+    assert medium_order["width_mm"] == 64.0
+    assert medium_order["height_mm"] == 30.0
+    assert medium_order["model_params"]["base_width_mm"] == 64.0
 
 
 def test_internal_order_preview_png_returns_503_when_renderer_is_unavailable(tmp_path):
@@ -479,7 +521,7 @@ def test_model_editor_saved_preset_survives_app_restart(tmp_path):
 
 
 def test_model_editor_save_preset_syncs_shared_heights_to_all_design_presets(tmp_path):
-    settings = make_temp_design_settings(tmp_path, source_names=["classic_plate", "rounded_tag"])
+    settings = make_temp_design_settings(tmp_path, source_names=["classic_plate"])
     app = create_test_app(settings)
 
     with TestClient(app) as client:
@@ -497,9 +539,9 @@ def test_model_editor_save_preset_syncs_shared_heights_to_all_design_presets(tmp
         refreshed = client.get("/api/admin/model-editor/designs", headers=ADMIN_HEADERS).json()["designs"]
 
     assert response.status_code == 200
-    assert len(response.json()["paths"]["synced_sources"]) == 2
-    assert len(response.json()["paths"]["backups"]) == 2
-    for source_name in ["03_custom_rectangular.json", "04_custom_oval.json"]:
+    assert len(response.json()["paths"]["synced_sources"]) == 1
+    assert len(response.json()["paths"]["backups"]) == 1
+    for source_name in ["03_custom_rectangular.json"]:
         saved = json.loads((settings.designs_dir / source_name).read_text(encoding="utf-8"))
         for size in saved["sizes"]:
             assert size["thickness_mm"] == 4.7
@@ -538,7 +580,7 @@ def test_order_model_params_snapshot_survives_later_preset_change(tmp_path):
         assert save_response.status_code == 200
         after = app.state.database.get_order(order_id)["model_params"]
 
-    assert before["base_width_mm"] == 64
+    assert before["base_width_mm"] == 56
     assert after == before
 
 

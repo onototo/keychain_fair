@@ -71,6 +71,7 @@ def _is_ready(order: dict[str, Any]) -> bool:
 def _orders_sheet(orders: list[dict[str, Any]]) -> list[list[CellValue]]:
     rows: list[list[CellValue]] = [
         [
+            "Order #",
             "ID",
             "Статус",
             "Модель",
@@ -84,6 +85,7 @@ def _orders_sheet(orders: list[dict[str, Any]]) -> list[list[CellValue]]:
     for order in sorted(orders, key=lambda item: str(item.get("created_at") or "")):
         rows.append(
             [
+                order.get("order_number"),
                 order.get("id"),
                 order.get("status"),
                 order.get("design_name"),

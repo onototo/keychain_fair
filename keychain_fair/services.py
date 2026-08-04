@@ -4,15 +4,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import struct
 import threading
+import time
 from typing import Any
 
 from . import statuses
-from .adapters import AdapterResult, CuraEngineSlicer, NullNotifier, OctoPrintController, OpenScadModelGenerator, stl_bounds
+from .adapters import AdapterResult, CuraEngineSlicer, NullNotifier, OctoPrintController, OpenScadModelGenerator, OverlaySafetySpec, stl_bounds
 from .batching import layout_orders, write_batch_manifest
 from .config import AppSettings
 from .database import Database
 from .designs import DesignCatalog, DesignCatalogError
-from .editor import final_dimensions_mm, model_params_for_selection
+from .editor import final_dimensions_mm, model_params_for_selection, relief_height_for_params
 from .moderation import MUTE_SECONDS, contains_profanity
 from .models import OrderCreate
 from .validation import normalize_by_car_number, split_by_car_number
@@ -21,6 +22,35 @@ from .validation import normalize_by_car_number, split_by_car_number
 MAX_UNPAID_ORDERS_PER_USER = 2
 CONTENT_SHAPES = {"name", "car"}
 LOOP_SHAPES = {"loop_left", "loop_right"}
+OVERLAY_AUTORUN_DELAY_SECONDS = 20
+OVERLAY_SAFETY_CLEARANCE_MM = 2.0
+BLANK_DESIGN_ID = "classic_plate"
+BLANK_TABLE_Y_OFFSET_MM = 5.0
+BLANK_STATE_EMPTY = 1
+BLANK_STATE_QUEUED = 2
+BLANK_STATE_PRINTING = 3
+BLANK_STATE_PRINTED = 4
+BLANK_STATE_OVERLAY_QUEUED = 5
+BLANK_STATE_OVERLAY_PRINTING = 6
+BLANK_STATE_OVERLAY_DONE = 7
+BLANK_PRINTING_STATES = {BLANK_STATE_PRINTING, BLANK_STATE_OVERLAY_PRINTING}
+BLANK_OCCUPIED_STATES = {
+    BLANK_STATE_QUEUED,
+    BLANK_STATE_PRINTING,
+    BLANK_STATE_PRINTED,
+    BLANK_STATE_OVERLAY_QUEUED,
+    BLANK_STATE_OVERLAY_PRINTING,
+    BLANK_STATE_OVERLAY_DONE,
+}
+BLANK_SLOT_STATES = {
+    BLANK_STATE_EMPTY: ("empty", "пустое место"),
+    BLANK_STATE_QUEUED: ("blank_queued", "заготовка будет напечатана"),
+    BLANK_STATE_PRINTING: ("blank_printing", "заготовка печатается"),
+    BLANK_STATE_PRINTED: ("blank_printed", "заготовка напечатана"),
+    BLANK_STATE_OVERLAY_QUEUED: ("overlay_queued", "текст будет напечатан"),
+    BLANK_STATE_OVERLAY_PRINTING: ("overlay_printing", "текст печатается"),
+    BLANK_STATE_OVERLAY_DONE: ("overlay_printed_needs_clear", "текст напечатан, освободите место"),
+}
 
 
 class OrderBlockedError(ValueError):
@@ -102,6 +132,36 @@ def _with_print_footprint(order: dict[str, Any]) -> dict[str, Any]:
     return enriched
 
 
+def _blank_state_payload(state_code: int) -> dict[str, Any]:
+    if state_code not in BLANK_SLOT_STATES:
+        raise ValueError(f"Unknown blank slot state: {state_code}")
+    state, label = BLANK_SLOT_STATES[state_code]
+    return {
+        "state_code": state_code,
+        "state": state,
+        "state_label": label,
+        "print_enabled": state_code == BLANK_STATE_PRINTED,
+    }
+
+
+def _blank_state_code(value: Any, fallback: int) -> int:
+    try:
+        state_code = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return state_code if state_code in BLANK_SLOT_STATES else fallback
+
+
+def _state_for_overlay_status(status: str | None) -> int | None:
+    if status == statuses.QUEUED:
+        return BLANK_STATE_OVERLAY_QUEUED
+    if status == statuses.PRINTING:
+        return BLANK_STATE_OVERLAY_PRINTING
+    if status == statuses.PRINTED:
+        return BLANK_STATE_OVERLAY_DONE
+    return None
+
+
 def _split_custom_text(value: str, limits: dict[str, Any]) -> tuple[str, str]:
     cleaned = " ".join(str(value).strip().split())
     first_limit = int(limits.get("max_line_1_chars") or 14)
@@ -152,6 +212,8 @@ class OrderService:
         self.printer = printer
         self.notifier = notifier
         self._queue_lock = threading.Lock()
+        self._overlay_autorun_enabled = False
+        self._overlay_next_start_at = 0.0
 
     def create_order(self, payload: OrderCreate) -> dict[str, Any]:
         if payload.idempotency_key:
@@ -356,8 +418,558 @@ class OrderService:
 
         return {"generated": generated, "errors": errors}
 
+    def _classic_selection(self, size_id: str | None = None) -> Any:
+        return self.catalog.validate_selection(BLANK_DESIGN_ID, size_id or self.settings.queue.blank_size_id, [])
+
+    def _blank_order(self, blank_id: str, size_id: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        selection = self._classic_selection(size_id)
+        model_params = model_params_for_selection(selection, self.settings.model.base_height_mm)
+        width_mm, height_mm = final_dimensions_mm(selection.design, model_params, selection.elements)
+        car_block = model_params.get("text_blocks", {}).get("car", {})
+        order = {
+            "id": blank_id,
+            "customer_name": "blank",
+            "car_number": "",
+            "print_line_1": "",
+            "print_line_2": "",
+            "design_id": selection.design["id"],
+            "design_name": selection.design["name"],
+            "size_id": selection.size["id"],
+            "size_label": selection.size["label"],
+            "selected_elements": selection.elements,
+            "width_mm": width_mm,
+            "height_mm": height_mm,
+            "thickness_mm": float(model_params.get("thickness_mm", selection.size["thickness_mm"])),
+            "font_size_mm": float(car_block.get("font_size_mm", selection.size["font_size_mm"])),
+            "model_params": model_params,
+        }
+        return order, selection.design
+
+    def _blank_size_id_for_dimensions(self, width_mm: float, height_mm: float) -> str | None:
+        try:
+            design = self.catalog.get_design(BLANK_DESIGN_ID)
+        except DesignCatalogError:
+            return None
+        for size in design.get("sizes", []):
+            if abs(float(size.get("width_mm", 0.0)) - width_mm) <= 0.01 and abs(float(size.get("height_mm", 0.0)) - height_mm) <= 0.01:
+                return str(size["id"])
+        return None
+
+    def _blank_batch_dimensions(
+        self,
+        blank_batch: dict[str, Any],
+        fallback_width: float,
+        fallback_height: float,
+    ) -> tuple[float, float]:
+        metadata = blank_batch.get("metadata", {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+        first_slot = raw_slots[0] if raw_slots and isinstance(raw_slots[0], dict) else {}
+        return (
+            float(metadata.get("blank_width_mm") or first_slot.get("width_mm") or fallback_width),
+            float(metadata.get("blank_height_mm") or first_slot.get("height_mm") or fallback_height),
+        )
+
+    def _blank_batch_size_id(self, blank_batch: dict[str, Any], fallback_width: float, fallback_height: float) -> str:
+        metadata = blank_batch.get("metadata", {})
+        if isinstance(metadata, dict) and metadata.get("blank_size_id"):
+            return str(metadata["blank_size_id"])
+        blank_width, blank_height = self._blank_batch_dimensions(blank_batch, fallback_width, fallback_height)
+        return self._blank_size_id_for_dimensions(blank_width, blank_height) or self.settings.queue.blank_size_id
+
+    def _blank_slots(self, width_mm: float, height_mm: float) -> list[dict[str, Any]]:
+        bed_width, bed_height = self.settings.queue.bed_size_mm
+        spacing = self.settings.queue.item_spacing_mm
+        slots: list[dict[str, Any]] = []
+        y = spacing + BLANK_TABLE_Y_OFFSET_MM
+        while y + height_mm + spacing <= bed_height + 0.001:
+            x = spacing
+            while x + width_mm + spacing <= bed_width + 0.001:
+                slots.append(
+                    {
+                        "index": len(slots),
+                        "x_mm": round(x, 3),
+                        "y_mm": round(y, 3),
+                        "width_mm": round(width_mm, 3),
+                        "height_mm": round(height_mm, 3),
+                        **_blank_state_payload(BLANK_STATE_EMPTY),
+                    }
+                )
+                x += width_mm + spacing
+            y += height_mm + spacing
+        return slots
+
+    def _normalize_blank_slot(
+        self,
+        slot: dict[str, Any],
+        fallback_index: int,
+        blank_width: float,
+        blank_height: float,
+        default_state_code: int = BLANK_STATE_EMPTY,
+    ) -> dict[str, Any]:
+        try:
+            index = int(slot.get("index", fallback_index))
+        except (TypeError, ValueError):
+            index = fallback_index
+        fallback_state = BLANK_STATE_OVERLAY_DONE if slot.get("print_enabled") is False else default_state_code
+        state_code = _blank_state_code(slot.get("state_code"), fallback_state)
+        return {
+            "index": index,
+            "x_mm": round(float(slot.get("x_mm", 0.0)), 3),
+            "y_mm": round(float(slot.get("y_mm", 0.0)), 3),
+            "width_mm": round(float(slot.get("width_mm", blank_width)), 3),
+            "height_mm": round(float(slot.get("height_mm", blank_height)), 3),
+            **_blank_state_payload(state_code),
+        }
+
+    def _blank_slot_fits_order(self, slot: dict[str, Any], order: dict[str, Any]) -> bool:
+        width = float(order.get("print_width_mm") or order["width_mm"])
+        height = float(order.get("print_height_mm") or order["height_mm"])
+        return width <= float(slot["width_mm"]) + 0.001 and height <= float(slot["height_mm"]) + 0.001
+
+    def _blank_slot_matches_order_size(self, slot: dict[str, Any], order: dict[str, Any]) -> bool:
+        return (
+            abs(float(order["width_mm"]) - float(slot["width_mm"])) <= 0.01
+            and abs(float(order["height_mm"]) - float(slot["height_mm"])) <= 0.01
+        )
+
+    def _slot_index(self, slot: dict[str, Any], fallback_index: int) -> int:
+        try:
+            return int(slot.get("index", fallback_index))
+        except (TypeError, ValueError):
+            return fallback_index
+
+    def _default_blank_slot_state(self, blank_batch: dict[str, Any] | None) -> int:
+        if blank_batch is None:
+            return BLANK_STATE_EMPTY
+        if blank_batch["status"] == statuses.QUEUED:
+            return BLANK_STATE_QUEUED
+        if blank_batch["status"] == statuses.PRINTING:
+            return BLANK_STATE_PRINTING
+        if blank_batch["status"] == statuses.PRINTED:
+            return BLANK_STATE_PRINTED
+        return BLANK_STATE_EMPTY
+
+    def _normalize_blank_slots(
+        self,
+        raw_slots: list[Any],
+        blank_width: float,
+        blank_height: float,
+        default_state_code: int,
+        assignments: dict[int, dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized = []
+        for fallback_index, raw_slot in enumerate(raw_slots):
+            slot = dict(raw_slot) if isinstance(raw_slot, dict) else {}
+            slot_index = self._slot_index(slot, fallback_index)
+            state_default = default_state_code
+            if "state_code" not in slot:
+                assignment = (assignments or {}).get(slot_index)
+                overlay_state = _state_for_overlay_status(assignment.get("batch_status") if assignment else None)
+                if overlay_state is not None:
+                    state_default = overlay_state
+            normalized.append(self._normalize_blank_slot(slot, fallback_index, blank_width, blank_height, state_default))
+        return normalized
+
+    def _blank_slots_payload(self, batch: dict[str, Any], slots: list[dict[str, Any]]) -> dict[str, Any]:
+        payload = dict(batch.get("metadata") or {})
+        payload["slots"] = slots
+        payload["slot_count"] = len(slots)
+        return payload
+
+    def _set_slot_states(
+        self,
+        slots: list[dict[str, Any]],
+        slot_indices: set[int],
+        state_code: int,
+    ) -> list[dict[str, Any]]:
+        return [
+            {**slot, **_blank_state_payload(state_code)} if int(slot["index"]) in slot_indices else slot
+            for slot in slots
+        ]
+
+    def _update_blank_batch_slots(
+        self,
+        batch: dict[str, Any],
+        slots: list[dict[str, Any]],
+        *,
+        status: str | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        return self.database.update_batch_files(
+            batch["id"],
+            status=status,
+            error_message=error_message,
+            metadata_payload=self._blank_slots_payload(batch, slots),
+        )
+
+    def _set_parent_blank_slot_state(self, overlay_batch: dict[str, Any], state_code: int) -> dict[str, Any] | None:
+        parent_id = overlay_batch.get("parent_batch_id")
+        if not parent_id or overlay_batch.get("slot_index") is None:
+            return None
+        blank_batch = self.database.get_batch(str(parent_id))
+        metadata = blank_batch.get("metadata", {})
+        raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+        if not isinstance(raw_slots, list) or not raw_slots:
+            return None
+        blank_width = float(metadata.get("blank_width_mm") or 56.0)
+        blank_height = float(metadata.get("blank_height_mm") or 24.0)
+        slots = self._normalize_blank_slots(raw_slots, blank_width, blank_height, self._default_blank_slot_state(blank_batch))
+        slots = self._set_slot_states(slots, {int(overlay_batch["slot_index"])}, state_code)
+        return self._update_blank_batch_slots(blank_batch, slots)
+
+    def _overlay_assignments(self, blank_batch: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+        assignments: dict[int, dict[str, Any]] = {}
+        if blank_batch is None:
+            return assignments
+        for batch in self.database.overlay_batches_for_blank(blank_batch["id"]):
+            if batch.get("slot_index") is None:
+                continue
+            try:
+                slot_index = int(batch["slot_index"])
+            except (TypeError, ValueError):
+                continue
+            item = batch["items"][0] if batch.get("items") else {}
+            assignments[slot_index] = {
+                "batch_id": batch["id"],
+                "batch_status": batch["status"],
+                "batch_status_label": batch.get("status_label", batch["status"]),
+                "order_id": item.get("order_id"),
+                "order_number": item.get("order_number") or "",
+                "order_status": item.get("status"),
+                "customer_name": item.get("customer_name") or "",
+                "car_number": item.get("car_number") or "",
+                "print_line_1": item.get("print_line_1") or "",
+                "print_line_2": item.get("print_line_2") or "",
+                "design_name": item.get("design_name") or "",
+                "size_label": item.get("size_label") or "",
+            }
+        return assignments
+
+    def blank_table_preview(self) -> dict[str, Any]:
+        blank_order, _ = self._blank_order("blank_preview")
+        blank_width = float(blank_order["width_mm"])
+        blank_height = float(blank_order["height_mm"])
+        blank_size_id = str(blank_order["size_id"])
+        blank_size_label = str(blank_order["size_label"])
+        planned_slots = self._blank_slots(blank_width, blank_height)
+        blank_batch = self.database.latest_blank_batch([statuses.QUEUED, statuses.PRINTING, statuses.PRINTED])
+        assignments = self._overlay_assignments(blank_batch)
+
+        source_slots = planned_slots
+        default_state = BLANK_STATE_EMPTY
+        slots: list[dict[str, Any]] | None = None
+        if blank_batch is not None:
+            metadata = blank_batch.get("metadata", {})
+            metadata = metadata if isinstance(metadata, dict) else {}
+            saved_slots = metadata.get("slots", [])
+            if isinstance(saved_slots, list) and saved_slots:
+                batch_width, batch_height = self._blank_batch_dimensions(blank_batch, blank_width, blank_height)
+                batch_slots = self._normalize_blank_slots(
+                    saved_slots,
+                    batch_width,
+                    batch_height,
+                    self._default_blank_slot_state(blank_batch),
+                    assignments,
+                )
+                if any(slot["state_code"] in BLANK_OCCUPIED_STATES for slot in batch_slots) or assignments:
+                    blank_width, blank_height = batch_width, batch_height
+                    blank_size_id = self._blank_batch_size_id(blank_batch, blank_width, blank_height)
+                    try:
+                        batch_blank_order, _ = self._blank_order("blank_preview", blank_size_id)
+                        blank_size_label = str(batch_blank_order["size_label"])
+                    except DesignCatalogError:
+                        blank_size_label = f"{blank_width:g}x{blank_height:g} мм"
+                    slots = batch_slots
+                else:
+                    blank_batch = None
+                    assignments = {}
+            default_state = self._default_blank_slot_state(blank_batch)
+
+        if slots is None:
+            slots = self._normalize_blank_slots(source_slots, blank_width, blank_height, default_state, assignments)
+
+        preview_slots = []
+        for slot in slots:
+            assignment = assignments.get(slot["index"])
+            preview_slot = {
+                **slot,
+                "assigned": assignment is not None,
+                "available_for_blank": slot["state_code"] == BLANK_STATE_EMPTY,
+                "available_for_text": slot["state_code"] == BLANK_STATE_PRINTED,
+            }
+            if assignment is not None:
+                preview_slot["assignment"] = assignment
+            preview_slots.append(preview_slot)
+
+        assigned_count = sum(1 for slot in preview_slots if slot["assigned"])
+        state_counts = {
+            str(state_code): sum(1 for slot in preview_slots if slot["state_code"] == state_code)
+            for state_code in BLANK_SLOT_STATES
+        }
+        empty_count = state_counts[str(BLANK_STATE_EMPTY)]
+        free_count = sum(1 for slot in preview_slots if slot["available_for_text"])
+        active_batch_payload = None
+        has_active_blanks = any(slot["state_code"] in BLANK_OCCUPIED_STATES for slot in preview_slots)
+        state = "planned"
+        message = f"План стола: {len(preview_slots)} заготовок {blank_size_label} {blank_width:g}x{blank_height:g} мм."
+
+        if blank_batch is not None:
+            active_batch_payload = {
+                "id": blank_batch["id"],
+                "status": blank_batch["status"],
+                "status_label": blank_batch.get("status_label", blank_batch["status"]),
+            }
+            if state_counts[str(BLANK_STATE_PRINTING)]:
+                state = "printing_blanks"
+                message = f"Печатается заготовок: {state_counts[str(BLANK_STATE_PRINTING)]} из {len(preview_slots)}."
+            elif state_counts[str(BLANK_STATE_QUEUED)]:
+                state = "queued_blanks"
+                message = f"Будет напечатано заготовок: {state_counts[str(BLANK_STATE_QUEUED)]}."
+            elif free_count == 0 and has_active_blanks:
+                state = "full"
+                message = "Нет свободных напечатанных заготовок для текста. Освободите места или напечатайте заготовки."
+            else:
+                state = "active"
+                message = f"Активный стол: заготовок для текста {free_count}, пустых мест {empty_count} из {len(preview_slots)}."
+
+        return {
+            "state": state,
+            "message": message,
+            "blank_size_id": blank_size_id,
+            "blank_size_label": blank_size_label,
+            "blank_size_mm": [blank_width, blank_height],
+            "bed_size_mm": self.settings.queue.bed_size_mm,
+            "slot_count": len(preview_slots),
+            "assigned_slots": assigned_count,
+            "free_slots": free_count,
+            "empty_slots": empty_count,
+            "disabled_slots": state_counts[str(BLANK_STATE_OVERLAY_DONE)],
+            "state_counts": state_counts,
+            "has_active_blanks": has_active_blanks,
+            "can_accept_orders": has_active_blanks and free_count > 0,
+            "needs_new_blanks": has_active_blanks and free_count == 0,
+            "active_blank_batch": active_batch_payload,
+            "slots": preview_slots,
+        }
+
+    def set_blank_slot_state(
+        self,
+        blank_batch_id: str,
+        slot_index: int,
+        state_code: int | None,
+        legacy_print_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        with self._queue_lock:
+            blank_batch = self.database.get_batch(blank_batch_id)
+            if blank_batch.get("kind") != "blank":
+                raise ValueError("Batch is not a blank table")
+
+            if state_code is None:
+                if legacy_print_enabled is None:
+                    raise ValueError("Blank slot state is required")
+                state_code = BLANK_STATE_PRINTED if legacy_print_enabled else BLANK_STATE_OVERLAY_DONE
+            state_code = _blank_state_code(state_code, 0)
+            if state_code == 0:
+                raise ValueError("Blank slot state must be between 1 and 7")
+
+            metadata = blank_batch.get("metadata", {})
+            raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+            if not isinstance(raw_slots, list) or not raw_slots:
+                raise ValueError("Blank batch has no saved slots")
+
+            blank_width = float(metadata.get("blank_width_mm") or 56.0)
+            blank_height = float(metadata.get("blank_height_mm") or 24.0)
+            assignments = self._overlay_assignments(blank_batch)
+            slots = self._normalize_blank_slots(
+                raw_slots,
+                blank_width,
+                blank_height,
+                self._default_blank_slot_state(blank_batch),
+                assignments,
+            )
+            found = False
+            current_state = None
+            updated_slots: list[dict[str, Any]] = []
+            for slot in slots:
+                if int(slot["index"]) == int(slot_index):
+                    found = True
+                    current_state = int(slot["state_code"])
+                    if current_state == BLANK_STATE_PRINTING and blank_batch["status"] == statuses.PRINTING:
+                        raise ValueError("Can not change a slot while it is printing")
+                    updated_slots.append({**slot, **_blank_state_payload(state_code)})
+                else:
+                    updated_slots.append(slot)
+            if not found:
+                raise KeyError(slot_index)
+
+            for batch in self.database.overlay_batches_for_blank(blank_batch_id):
+                if batch.get("slot_index") != slot_index:
+                    continue
+                if batch["status"] == statuses.PRINTING:
+                    raise ValueError("Can not change a slot while its overlay is printing")
+                if batch["status"] == statuses.QUEUED and batch.get("items") and state_code != BLANK_STATE_OVERLAY_QUEUED:
+                    self.database.invalidate_batch_for_order(
+                        batch["items"][0]["order_id"],
+                        "Blank slot state changed by operator.",
+                    )
+
+            return self._update_blank_batch_slots(blank_batch, updated_slots)
+
+    def set_blank_slot_enabled(self, blank_batch_id: str, slot_index: int, print_enabled: bool) -> dict[str, Any]:
+        return self.set_blank_slot_state(blank_batch_id, slot_index, None, print_enabled)
+
+    def print_blank_batch(self, target_count: int | None = None) -> dict[str, Any]:
+        with self._queue_lock:
+            blank_order, design = self._blank_order("blank_template")
+            blank_width = float(blank_order["width_mm"])
+            blank_height = float(blank_order["height_mm"])
+            planned_slots = self._blank_slots(blank_width, blank_height)
+            blank_batch = self.database.latest_blank_batch([statuses.QUEUED, statuses.PRINTING, statuses.PRINTED])
+            assignments = self._overlay_assignments(blank_batch)
+            slots = planned_slots
+            default_state = BLANK_STATE_EMPTY
+            if blank_batch is not None:
+                metadata = blank_batch.get("metadata", {})
+                metadata = metadata if isinstance(metadata, dict) else {}
+                raw_slots = metadata.get("slots", [])
+                if isinstance(raw_slots, list) and raw_slots:
+                    batch_width, batch_height = self._blank_batch_dimensions(blank_batch, blank_width, blank_height)
+                    batch_default_state = self._default_blank_slot_state(blank_batch)
+                    batch_slots = self._normalize_blank_slots(raw_slots, batch_width, batch_height, batch_default_state, assignments)
+                    if any(slot["state_code"] in BLANK_OCCUPIED_STATES for slot in batch_slots) or assignments:
+                        slots = batch_slots
+                        blank_width, blank_height = batch_width, batch_height
+                        batch_size_id = self._blank_batch_size_id(blank_batch, blank_width, blank_height)
+                        blank_order, design = self._blank_order("blank_template", batch_size_id)
+                    else:
+                        blank_batch = None
+                        assignments = {}
+                default_state = self._default_blank_slot_state(blank_batch)
+            if slots is not planned_slots:
+                slots = self._normalize_blank_slots(slots, blank_width, blank_height, default_state, assignments)
+            else:
+                slots = self._normalize_blank_slots(planned_slots, blank_width, blank_height, default_state, assignments)
+            if not slots:
+                raise ValueError("Blank does not fit on the configured bed")
+            target_total = len(slots) if target_count is None else min(int(target_count), len(slots))
+            occupied_count = sum(1 for slot in slots if slot["state_code"] in BLANK_OCCUPIED_STATES)
+            missing_count = max(0, target_total - occupied_count)
+            selected_slots = [slot for slot in slots if slot["state_code"] == BLANK_STATE_EMPTY][:missing_count]
+            if not selected_slots:
+                return {
+                    "batch": blank_batch,
+                    "message": f"Заготовки не запускались: занято {occupied_count} из {len(slots)}, цель {target_total}.",
+                    "slots": [],
+                    "requested_count": target_total,
+                    "selected_count": 0,
+                    "blank_preview": self.blank_table_preview(),
+                }
+            if not self.settings.slicer.enabled:
+                raise ValueError("Slicing is disabled in config/app.yaml")
+
+            printer_ready = self._printer_ready_for_start()
+            if not printer_ready.success:
+                raise ValueError(f"Printer is not ready: {printer_ready.message}")
+
+            selected_indices = {int(slot["index"]) for slot in selected_slots}
+            queued_slots = self._set_slot_states(slots, selected_indices, BLANK_STATE_QUEUED)
+            if blank_batch is None:
+                batch = self.database.create_blank_batch(
+                    queued_slots,
+                    metadata_payload={
+                        "blank_width_mm": blank_order["width_mm"],
+                        "blank_height_mm": blank_order["height_mm"],
+                        "blank_thickness_mm": blank_order["thickness_mm"],
+                        "blank_size_id": blank_order["size_id"],
+                        "blank_size_label": blank_order["size_label"],
+                        "slot_count": len(queued_slots),
+                    },
+                )
+            else:
+                batch = self._update_blank_batch_slots(blank_batch, queued_slots, status=statuses.QUEUED)
+            previous_batch = blank_batch
+            previous_slots = slots
+
+            try:
+                blank_order["id"] = batch["id"]
+                blank_result = self.generator.generate_blank_stl(batch["id"], blank_order, design)
+                if not blank_result.success or not blank_result.output_path:
+                    raise ValueError(blank_result.message)
+
+                layout = [
+                    {
+                        "order": {
+                            **blank_order,
+                            "stl_path": str(blank_result.output_path),
+                            "stl_origin_x_mm": 0.0,
+                            "stl_origin_y_mm": 0.0,
+                        },
+                        "x_mm": slot["x_mm"],
+                        "y_mm": slot["y_mm"],
+                    }
+                    for slot in selected_slots
+                ]
+                batch_dir = self.settings.generated_dir / "batches" / batch["id"]
+                manifest_path = write_batch_manifest(batch["id"], layout, batch_dir / f"{batch['id']}_manifest.json")
+                batch = self.database.update_batch_files(batch["id"], manifest_path=manifest_path)
+
+                plate_result = self.generator.combine_batch_stl(batch["id"], layout)
+                if not plate_result.success or not plate_result.output_path:
+                    raise ValueError(plate_result.message)
+                plate_scad = Path(plate_result.extra["plate_scad_path"]) if plate_result.extra else None
+                batch = self.database.update_batch_files(batch["id"], plate_scad_path=plate_scad, plate_stl_path=plate_result.output_path)
+
+                slicing_result = self.slicer.slice_plate(plate_result.output_path, batch["id"], insert_filament_change=False)
+                if not slicing_result.success or not slicing_result.output_path:
+                    raise ValueError(slicing_result.message)
+                batch = self.database.update_batch_files(batch["id"], gcode_path=slicing_result.output_path)
+
+                print_result = self.printer.upload_and_print(slicing_result.output_path)
+                if not print_result.success:
+                    raise ValueError(print_result.message)
+            except ValueError as exc:
+                if previous_batch is not None:
+                    self._update_blank_batch_slots(previous_batch, previous_slots, status=previous_batch["status"], error_message=str(exc))
+                else:
+                    self.database.update_batch_files(batch["id"], status=statuses.ERROR, error_message=str(exc))
+                raise
+
+            printing_slots = self._set_slot_states(queued_slots, selected_indices, BLANK_STATE_PRINTING)
+            batch = self._update_blank_batch_slots(batch, printing_slots, status=statuses.PRINTING)
+            selected_printing_slots = [slot for slot in printing_slots if int(slot["index"]) in selected_indices]
+            self._overlay_autorun_enabled = False
+            return {
+                "batch": batch,
+                "message": print_result.message,
+                "slots": selected_printing_slots,
+                "requested_count": target_total,
+                "selected_count": len(selected_printing_slots),
+                "blank_preview": self.blank_table_preview(),
+            }
+
     def build_print_batches(self) -> dict[str, Any]:
-        candidates = [_with_print_footprint(order) for order in self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)]
+        blank_batch = self.database.latest_printed_blank_batch()
+        if blank_batch is None:
+            return {
+                "batches_created": 0,
+                "batches": [],
+                "diagnostics": ["Print blanks first, then prepare paid orders for overlay printing."],
+            }
+
+        raw_slots = blank_batch.get("metadata", {}).get("slots", [])
+        if not isinstance(raw_slots, list) or not raw_slots:
+            return {
+                "batches_created": 0,
+                "batches": [],
+                "diagnostics": [f"Blank batch {blank_batch['id']} has no saved slots."],
+            }
+        blank_width = float(blank_batch.get("metadata", {}).get("blank_width_mm") or 64.0)
+        blank_height = float(blank_batch.get("metadata", {}).get("blank_height_mm") or 30.0)
+        assignments = self._overlay_assignments(blank_batch)
+        slots = self._normalize_blank_slots(raw_slots, blank_width, blank_height, self._default_blank_slot_state(blank_batch), assignments)
+
+        candidates = self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)
         ready_orders = [order for order in candidates if order.get("paid_at")]
         batches: list[dict[str, Any]] = []
         diagnostics: list[str] = []
@@ -365,25 +977,79 @@ class OrderService:
         if skipped:
             diagnostics.append(f"Skipped {skipped} unpaid STL-ready order(s).")
 
-        while ready_orders:
-            active_height = _filament_change_height(ready_orders[0], self.settings.model.base_height_mm)
-            height_group = [
-                order
-                for order in ready_orders
-                if _filament_change_height(order, self.settings.model.base_height_mm) == active_height
-            ]
-            layout = layout_orders(
-                height_group,
-                self.settings.queue.bed_size_mm,
-                self.settings.queue.item_spacing_mm,
-                self.settings.queue.max_items_per_plate,
-            )
-            if not layout:
-                diagnostics.append("No STL-ready orders fit on the configured bed size.")
-                break
+        used_slot_indices = {
+            int(batch["slot_index"])
+            for batch in self.database.overlay_batches_for_blank(blank_batch["id"])
+            if batch.get("slot_index") is not None
+        }
+        available_slots = [
+            slot
+            for slot in slots
+            if slot["state_code"] == BLANK_STATE_PRINTED and int(slot["index"]) not in used_slot_indices
+        ]
+        blocked_slots = [
+            slot
+            for slot in slots
+            if slot["state_code"] != BLANK_STATE_PRINTED and int(slot["index"]) not in used_slot_indices
+        ]
+        if blocked_slots:
+            diagnostics.append(f"Skipped {len(blocked_slots)} blank slot(s) that are not ready for overlay.")
+        if ready_orders and not available_slots:
+            diagnostics.append(f"Blank batch {blank_batch['id']} has no free overlay slots.")
 
-            manifest_seed = self.settings.generated_dir / "batches" / "pending" / "manifest.json"
-            batch = self.database.create_batch(layout, manifest_seed)
+        waiting_without_slot = 0
+        for order in ready_orders:
+            if not available_slots:
+                waiting_without_slot += 1
+                continue
+            try:
+                design = self.catalog.get_design(order["design_id"])
+            except DesignCatalogError as exc:
+                self.database.update_order_status(order["id"], statuses.ERROR, str(exc))
+                diagnostics.append(str(exc))
+                continue
+
+            slot_position = next(
+                (
+                    index
+                    for index, slot in enumerate(available_slots)
+                    if self._blank_slot_matches_order_size(slot, order) and self._blank_slot_fits_order(slot, order)
+                ),
+                None,
+            )
+            if slot_position is None:
+                order_label = order.get("order_number") or order["id"]
+                if available_slots and order.get("design_id") == BLANK_DESIGN_ID and not any(
+                    self._blank_slot_matches_order_size(slot, order) for slot in available_slots
+                ):
+                    size_label = order.get("size_label") or order.get("size_id") or ""
+                    diagnostics.append(f"Order {order_label} size {size_label} does not match available blank slots.")
+                else:
+                    diagnostics.append(f"Order {order_label} does not fit any enabled blank slot.")
+                continue
+            slot = available_slots.pop(slot_position)
+            overlay_result = self.generator.generate_overlay_stl(order, design)
+            if not overlay_result.success or not overlay_result.output_path:
+                self.database.update_order_status(order["id"], statuses.ERROR, overlay_result.message)
+                diagnostics.append(overlay_result.message)
+                continue
+
+            overlay_order = {
+                **order,
+                "stl_path": str(overlay_result.output_path),
+                "stl_origin_x_mm": 0.0,
+                "stl_origin_y_mm": 0.0,
+                "print_width_mm": float(order["width_mm"]),
+                "print_height_mm": float(order["height_mm"]),
+            }
+            layout = [{"order": overlay_order, "x_mm": slot["x_mm"], "y_mm": slot["y_mm"]}]
+            batch = self.database.create_batch(
+                layout,
+                kind="overlay",
+                parent_batch_id=blank_batch["id"],
+                slot_index=int(slot["index"]),
+                metadata_payload={"blank_batch_id": blank_batch["id"], "slot": slot},
+            )
             batch_dir = self.settings.generated_dir / "batches" / batch["id"]
             manifest_path = write_batch_manifest(batch["id"], layout, batch_dir / f"{batch['id']}_manifest.json")
             batch = self.database.update_batch_files(batch["id"], manifest_path=manifest_path)
@@ -396,15 +1062,17 @@ class OrderService:
                     plate_scad_path=plate_scad,
                     plate_stl_path=plate_result.output_path,
                 )
+                slots = self._set_slot_states(slots, {int(slot["index"])}, BLANK_STATE_OVERLAY_QUEUED)
+                blank_batch = self._update_blank_batch_slots(blank_batch, slots)
             else:
                 batch = self.database.update_batch_files(batch["id"], status=statuses.ERROR, error_message=plate_result.message)
-                for item in layout:
-                    self.database.update_order_status(item["order"]["id"], statuses.ERROR, plate_result.message)
+                self.database.update_order_status(order["id"], statuses.ERROR, plate_result.message)
                 diagnostics.append(plate_result.message)
 
             batches.append(batch)
-            used_ids = {item["order"]["id"] for item in layout}
-            ready_orders = [order for order in ready_orders if order["id"] not in used_ids]
+
+        if waiting_without_slot:
+            diagnostics.append(f"Only {len(batches)} free blank slot(s) available for {len(ready_orders)} ready order(s).")
 
         return {"batches_created": len(batches), "batches": batches, "diagnostics": diagnostics}
 
@@ -420,23 +1088,8 @@ class OrderService:
         with self._queue_lock:
             recovered_orders = self.database.reset_orphan_printing_orders()
             generation = self.process_paid_orders()
-            pending_ready_orders = [
-                order
-                for order in self.database.list_orders_by_statuses([statuses.STL_READY], ascending=True)
-                if order.get("paid_at")
-            ]
-            if pending_ready_orders:
-                rebuilt_queued_batches = self.database.reset_queued_batches_for_rebuild(
-                    "Batch rebuilt because the print bed was prepared again."
-                )
-            else:
-                rebuilt_queued_batches = {"batch_ids": [], "order_ids": [], "orders_reset": 0}
+            rebuilt_queued_batches = {"batch_ids": [], "order_ids": [], "orders_reset": 0}
             batching = self.build_print_batches()
-            if rebuilt_queued_batches["batch_ids"]:
-                batching["diagnostics"].append(
-                    f"Rebuilt {len(rebuilt_queued_batches['batch_ids'])} queued batch(es) with "
-                    f"{rebuilt_queued_batches['orders_reset']} queued order(s)."
-                )
             if recovered_orders["order_ids"]:
                 batching["diagnostics"].append(
                     f"Recovered {len(recovered_orders['order_ids'])} paid order(s) that were marked printing before preparation."
@@ -514,7 +1167,12 @@ class OrderService:
             if gcode_path is None:
                 if not self.settings.slicer.enabled:
                     raise ValueError("Slicing is disabled in config/app.yaml")
-                slicing_result = self.slicer.slice_plate(plate_stl, batch_id, self._batch_filament_change_height(batch))
+                if batch.get("kind") == "blank":
+                    slicing_result = self.slicer.slice_plate(plate_stl, batch_id, insert_filament_change=False)
+                elif batch.get("kind") == "overlay":
+                    slicing_result = self.slicer.slice_overlay(plate_stl, batch_id, self._overlay_safety_for_batch(batch))
+                else:
+                    slicing_result = self.slicer.slice_plate(plate_stl, batch_id, self._batch_filament_change_height(batch))
                 if not slicing_result.success or not slicing_result.output_path:
                     self.database.update_batch_files(batch_id, error_message=slicing_result.message)
                     raise ValueError(slicing_result.message)
@@ -529,7 +1187,40 @@ class OrderService:
             batch = self.database.update_batch_files(batch_id, status=statuses.PRINTING)
             for item in batch["items"]:
                 self.database.update_order_status(item["order_id"], statuses.PRINTING)
+            if batch.get("kind") == "overlay":
+                self._set_parent_blank_slot_state(batch, BLANK_STATE_OVERLAY_PRINTING)
+            elif batch.get("kind") == "blank":
+                metadata = batch.get("metadata", {})
+                raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+                slots = self._normalize_blank_slots(
+                    raw_slots,
+                    float(metadata.get("blank_width_mm") or 56.0),
+                    float(metadata.get("blank_height_mm") or 24.0),
+                    BLANK_STATE_QUEUED,
+                )
+                queued_indices = {int(slot["index"]) for slot in slots if slot["state_code"] == BLANK_STATE_QUEUED}
+                if queued_indices:
+                    self._update_blank_batch_slots(batch, self._set_slot_states(slots, queued_indices, BLANK_STATE_PRINTING))
             return {"batch": self.database.get_batch(batch_id), "message": print_result.message}
+
+    def _overlay_safety_for_batch(self, batch: dict[str, Any]) -> OverlaySafetySpec:
+        if not batch.get("items"):
+            raise ValueError("Overlay batch has no order")
+        order = self.database.get_order(batch["items"][0]["order_id"])
+        slot = batch.get("metadata", {}).get("slot")
+        if not isinstance(slot, dict):
+            raise ValueError("Overlay batch has no saved blank slot")
+        relief_height = relief_height_for_params(order.get("model_params") or {}, order.get("selected_elements") or [])
+        return OverlaySafetySpec(
+            base_thickness_mm=float(order["thickness_mm"]),
+            relief_height_mm=float(relief_height),
+            safety_clearance_mm=OVERLAY_SAFETY_CLEARANCE_MM,
+            slot_x_mm=float(slot["x_mm"]),
+            slot_y_mm=float(slot["y_mm"]),
+            slot_width_mm=float(slot["width_mm"]),
+            slot_height_mm=float(slot["height_mm"]),
+            bed_size_mm=self.settings.queue.bed_size_mm,
+        )
 
     def _batch_filament_change_height(self, batch: dict[str, Any]) -> float:
         heights = {
@@ -543,6 +1234,42 @@ class OrderService:
             formatted = ", ".join(f"{height:g}" for height in sorted(heights))
             raise ValueError(f"Batch contains mixed base heights: {formatted} mm")
         return next(iter(heights))
+
+    def run_overlay_queue(self) -> dict[str, Any]:
+        prepared = self.prepare_queue()
+        with self._queue_lock:
+            self._overlay_autorun_enabled = True
+            self._overlay_next_start_at = 0.0
+        started = self.start_next_overlay_if_ready()
+        return {"autorun_enabled": True, "prepared": prepared, "started": started}
+
+    def start_next_overlay_if_ready(self) -> dict[str, Any]:
+        with self._queue_lock:
+            if not self._overlay_autorun_enabled:
+                return {"started": False, "reason": "autorun_disabled"}
+            remaining = self._overlay_next_start_at - time.monotonic()
+            if remaining > 0:
+                return {"started": False, "reason": "handoff_delay", "retry_after_seconds": int(remaining) + 1}
+            if self.database.has_printing_batches():
+                return {"started": False, "reason": "printer_busy"}
+            batch = self.database.next_queued_overlay_batch()
+            if batch is None:
+                self._overlay_autorun_enabled = False
+                return {"started": False, "reason": "empty_queue", "autorun_enabled": False}
+
+        try:
+            result = self.print_batch(batch["id"])
+        except ValueError as exc:
+            return {"started": False, "reason": "start_failed", "message": str(exc), "batch_id": batch["id"]}
+        return {"started": True, "batch": result["batch"], "message": result["message"]}
+
+    def _record_completed_batches_for_autorun(self, result: dict[str, Any]) -> None:
+        completed_overlay = any(batch.get("kind") == "overlay" for batch in result.get("batches", []))
+        if not completed_overlay:
+            return
+        with self._queue_lock:
+            if self._overlay_autorun_enabled:
+                self._overlay_next_start_at = time.monotonic() + OVERLAY_AUTORUN_DELAY_SECONDS
 
     def set_printer_heaters(self, bed_target_c: int, hotend_target_c: int) -> dict[str, Any]:
         connection = self.ensure_printer_connection("heater control")
@@ -572,6 +1299,8 @@ class OrderService:
 
     def stop_print(self) -> dict[str, Any]:
         with self._queue_lock:
+            self._overlay_autorun_enabled = False
+            self._overlay_next_start_at = 0.0
             connection = self.ensure_printer_connection("print stop")
             if not connection.success:
                 raise ValueError(connection.message)
@@ -582,6 +1311,28 @@ class OrderService:
 
             bed_result = self.printer.set_bed_target(0)
             reset = self.database.reset_printing_to_queue()
+            updated_batches = []
+            for batch in reset["batches"]:
+                if batch.get("kind") == "blank":
+                    metadata = batch.get("metadata", {})
+                    raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+                    slots = self._normalize_blank_slots(
+                        raw_slots,
+                        float(metadata.get("blank_width_mm") or 56.0),
+                        float(metadata.get("blank_height_mm") or 24.0),
+                        BLANK_STATE_QUEUED,
+                    )
+                    printing_indices = {int(slot["index"]) for slot in slots if slot["state_code"] == BLANK_STATE_PRINTING}
+                    if printing_indices:
+                        batch = self._update_blank_batch_slots(
+                            batch,
+                            self._set_slot_states(slots, printing_indices, BLANK_STATE_QUEUED),
+                            status=statuses.QUEUED,
+                        )
+                elif batch.get("kind") == "overlay":
+                    self._set_parent_blank_slot_state(batch, BLANK_STATE_OVERLAY_QUEUED)
+                updated_batches.append(batch)
+            reset["batches"] = updated_batches
             messages = [cancel_result.message]
             if bed_result.success:
                 messages.append(bed_result.message)
@@ -606,6 +1357,36 @@ class OrderService:
             raise ValueError(result.message)
         return {"ok": True, "message": result.message}
 
+    def _complete_printing_batches(self) -> dict[str, Any]:
+        result = self.database.complete_printing_batches()
+        updated_batches: list[dict[str, Any]] = []
+        for batch in result.get("batches", []):
+            if batch.get("kind") == "blank":
+                metadata = batch.get("metadata", {})
+                raw_slots = metadata.get("slots", []) if isinstance(metadata, dict) else []
+                slots = self._normalize_blank_slots(
+                    raw_slots,
+                    float(metadata.get("blank_width_mm") or 56.0),
+                    float(metadata.get("blank_height_mm") or 24.0),
+                    BLANK_STATE_PRINTED,
+                )
+                completed_indices = {
+                    int(slot["index"])
+                    for slot in slots
+                    if slot["state_code"] in {BLANK_STATE_QUEUED, BLANK_STATE_PRINTING}
+                }
+                if completed_indices:
+                    batch = self._update_blank_batch_slots(
+                        batch,
+                        self._set_slot_states(slots, completed_indices, BLANK_STATE_PRINTED),
+                        status=statuses.PRINTED,
+                    )
+            elif batch.get("kind") == "overlay":
+                self._set_parent_blank_slot_state(batch, BLANK_STATE_OVERLAY_DONE)
+            updated_batches.append(self.database.get_batch(batch["id"]))
+        result["batches"] = updated_batches
+        return result
+
     def complete_printing_batches_if_done(self, printer_status: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.database.has_printing_batches():
             return {"completed": False, "batches": [], "orders_updated": 0}
@@ -613,7 +1394,8 @@ class OrderService:
         if printer_status is not None:
             if printer_status.get("state") != "done_printing":
                 return {"completed": False, "batches": [], "orders_updated": 0}
-            result = self.database.complete_printing_batches()
+            result = self._complete_printing_batches()
+            self._record_completed_batches_for_autorun(result)
             return {"completed": bool(result["batches"] or result["orders_updated"]), **result}
 
         if not self.settings.octoprint.enabled:
@@ -627,9 +1409,12 @@ class OrderService:
         if not _printer_reports_print_done(job_data, printer_data):
             return {"completed": False, "batches": [], "orders_updated": 0}
 
-        result = self.database.complete_printing_batches()
+        result = self._complete_printing_batches()
+        self._record_completed_batches_for_autorun(result)
         return {"completed": bool(result["batches"] or result["orders_updated"]), **result}
 
     def run_queue(self) -> dict[str, Any]:
-        self.complete_printing_batches_if_done()
-        return self.prepare_queue(fail_on_connection_error=False)
+        completion = self.complete_printing_batches_if_done()
+        prepared = self.prepare_queue(fail_on_connection_error=False)
+        started = self.start_next_overlay_if_ready()
+        return {"completion": completion, "prepared": prepared, "started": started}

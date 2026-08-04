@@ -30,6 +30,8 @@ class DesignCatalog:
         for path in sorted(self.designs_dir.glob("*.json")):
             raw = json.loads(path.read_text(encoding="utf-8"))
             design = self._normalize_design(raw, path)
+            if design["id"] != "classic_plate":
+                continue
             designs.append(design)
         return sorted(designs, key=lambda item: (float(item.get("sort_order", 999)), item["id"]))
 

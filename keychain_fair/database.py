@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     String,
     Table,
@@ -37,6 +38,7 @@ orders = Table(
     "orders",
     metadata,
     Column("id", String, primary_key=True),
+    Column("order_number", String),
     Column("idempotency_key", String),
     Column("customer_name", String, nullable=False),
     Column("car_number", String, nullable=False),
@@ -87,6 +89,10 @@ print_batches = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("status", String, nullable=False),
+    Column("kind", String, nullable=False, default="order"),
+    Column("parent_batch_id", String),
+    Column("slot_index", Integer),
+    Column("metadata_json", Text),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("manifest_path", Text),
@@ -106,6 +112,13 @@ print_batch_items = Table(
 )
 
 Index("idx_orders_status_created", orders.c.status, orders.c.created_at)
+Index(
+    "idx_orders_order_number",
+    orders.c.order_number,
+    unique=True,
+    sqlite_where=orders.c.order_number.is_not(None),
+    postgresql_where=orders.c.order_number.is_not(None),
+)
 Index(
     "idx_orders_idempotency_key",
     orders.c.idempotency_key,
@@ -141,6 +154,19 @@ def _elapsed_seconds(start: str | None, end: str | None) -> int | None:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _format_order_number(value: int) -> str:
+    return f"{value:03d}" if value < 1000 else str(value)
+
+
+def _order_number_value(value: Any) -> int | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned.isdigit():
+        return None
+    return int(cleaned)
 
 
 def _content_element_count(selection: Any) -> int:
@@ -235,6 +261,15 @@ class Database:
             conn.execute(
                 text(
                     """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_order_number
+                    ON orders(order_number)
+                    WHERE order_number IS NOT NULL
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key
                     ON orders(idempotency_key)
                     WHERE idempotency_key IS NOT NULL
@@ -254,10 +289,12 @@ class Database:
             conn.execute(text("UPDATE orders SET source = 'web' WHERE source IS NULL OR source = ''"))
             conn.execute(text("UPDATE orders SET print_line_1 = '' WHERE print_line_1 IS NULL"))
             conn.execute(text("UPDATE orders SET print_line_2 = '' WHERE print_line_2 IS NULL"))
+        self._backfill_order_numbers()
 
     def _migrate_existing_schema(self) -> None:
         columns = {column["name"] for column in inspect(self.engine).get_columns("orders")}
         additions = {
+            "order_number": "TEXT",
             "idempotency_key": "TEXT",
             "archived_at": "TEXT",
             "model_params_json": "TEXT",
@@ -272,11 +309,55 @@ class Database:
             "price": "FLOAT",
         }
         missing = [(name, ddl_type) for name, ddl_type in additions.items() if name not in columns]
-        if not missing:
-            return
+        if missing:
+            with self.engine.begin() as conn:
+                for name, ddl_type in missing:
+                    conn.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {ddl_type}"))
+
+        batch_columns = {column["name"] for column in inspect(self.engine).get_columns("print_batches")}
+        batch_additions = {
+            "kind": "TEXT",
+            "parent_batch_id": "TEXT",
+            "slot_index": "INTEGER",
+            "metadata_json": "TEXT",
+        }
+        batch_missing = [(name, ddl_type) for name, ddl_type in batch_additions.items() if name not in batch_columns]
+        if batch_missing:
+            with self.engine.begin() as conn:
+                for name, ddl_type in batch_missing:
+                    conn.execute(text(f"ALTER TABLE print_batches ADD COLUMN {name} {ddl_type}"))
         with self.engine.begin() as conn:
-            for name, ddl_type in missing:
-                conn.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {ddl_type}"))
+            conn.execute(text("UPDATE print_batches SET kind = 'order' WHERE kind IS NULL OR kind = ''"))
+
+    def _next_order_number(self, conn: Connection) -> str:
+        used = {
+            value
+            for value in (
+                _order_number_value(item)
+                for item in conn.execute(select(orders.c.order_number)).scalars().all()
+            )
+            if value is not None
+        }
+        candidate = 1
+        while candidate in used:
+            candidate += 1
+        return _format_order_number(candidate)
+
+    def _backfill_order_numbers(self) -> None:
+        with self.engine.begin() as conn:
+            order_ids = list(
+                conn.execute(
+                    select(orders.c.id)
+                    .where((orders.c.order_number.is_(None)) | (orders.c.order_number == ""))
+                    .order_by(orders.c.created_at.asc(), orders.c.id.asc())
+                ).scalars()
+            )
+            for order_id in order_ids:
+                conn.execute(
+                    orders.update()
+                    .where(orders.c.id == order_id)
+                    .values(order_number=self._next_order_number(conn))
+                )
 
     def create_order(self, payload: dict[str, Any], selection: Any, model_params: dict[str, Any] | None = None) -> dict[str, Any]:
         idempotency_key = payload.get("idempotency_key") or None
@@ -330,6 +411,7 @@ class Database:
 
         try:
             with self.engine.begin() as conn:
+                values["order_number"] = self._next_order_number(conn)
                 conn.execute(orders.insert().values(**values))
         except IntegrityError:
             if idempotency_key:
@@ -588,7 +670,16 @@ class Database:
                 raise KeyError(order_id)
         return self.get_order(order_id)
 
-    def create_batch(self, layout_items: list[dict[str, Any]], manifest_path: Path | None = None) -> dict[str, Any]:
+    def create_batch(
+        self,
+        layout_items: list[dict[str, Any]],
+        manifest_path: Path | None = None,
+        *,
+        kind: str = "order",
+        parent_batch_id: str | None = None,
+        slot_index: int | None = None,
+        metadata_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         invalid_orders = [
             item["order"]["id"]
             for item in layout_items
@@ -604,6 +695,10 @@ class Database:
                 print_batches.insert().values(
                     id=batch_id,
                     status=statuses.QUEUED,
+                    kind=kind,
+                    parent_batch_id=parent_batch_id,
+                    slot_index=slot_index,
+                    metadata_json=json.dumps(metadata_payload, ensure_ascii=False) if metadata_payload else None,
                     created_at=created,
                     updated_at=created,
                     manifest_path=str(manifest_path) if manifest_path else None,
@@ -625,6 +720,70 @@ class Database:
                     .values(status=statuses.QUEUED, batch_id=batch_id, updated_at=created, error_message=None)
                 )
         return self.get_batch(batch_id)
+
+    def create_blank_batch(
+        self,
+        slots: list[dict[str, Any]],
+        manifest_path: Path | None = None,
+        metadata_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        batch_id = _new_id("blank")
+        created = now_iso()
+        payload = dict(metadata_payload or {})
+        payload["slots"] = slots
+        with self.engine.begin() as conn:
+            conn.execute(
+                print_batches.insert().values(
+                    id=batch_id,
+                    status=statuses.QUEUED,
+                    kind="blank",
+                    parent_batch_id=None,
+                    slot_index=None,
+                    metadata_json=json.dumps(payload, ensure_ascii=False),
+                    created_at=created,
+                    updated_at=created,
+                    manifest_path=str(manifest_path) if manifest_path else None,
+                )
+            )
+        return self.get_batch(batch_id)
+
+    def update_blank_slot_enabled(self, blank_batch_id: str, slot_index: int, is_enabled: bool) -> dict[str, Any]:
+        batch = self.get_batch(blank_batch_id)
+        if batch.get("kind") != "blank":
+            raise ValueError("Batch is not a blank table")
+
+        payload = dict(batch.get("metadata") or {})
+        raw_slots = payload.get("slots")
+        if not isinstance(raw_slots, list):
+            raise ValueError("Blank batch has no saved slots")
+
+        updated_slots: list[dict[str, Any]] = []
+        found = False
+        for fallback_index, raw_slot in enumerate(raw_slots):
+            slot = dict(raw_slot) if isinstance(raw_slot, dict) else {}
+            try:
+                current_index = int(slot.get("index", fallback_index))
+            except (TypeError, ValueError):
+                current_index = fallback_index
+            slot["index"] = current_index
+            slot["print_enabled"] = bool(slot.get("print_enabled", True))
+            if current_index == slot_index:
+                slot["print_enabled"] = bool(is_enabled)
+                found = True
+            updated_slots.append(slot)
+
+        if not found:
+            raise KeyError(slot_index)
+
+        payload["slots"] = updated_slots
+        updated = now_iso()
+        with self.engine.begin() as conn:
+            conn.execute(
+                print_batches.update()
+                .where(print_batches.c.id == blank_batch_id)
+                .values(metadata_json=json.dumps(payload, ensure_ascii=False), updated_at=updated)
+            )
+        return self.get_batch(blank_batch_id)
 
     def reset_queued_batches_for_rebuild(self, message: str) -> dict[str, Any]:
         updated = now_iso()
@@ -677,6 +836,7 @@ class Database:
         gcode_path: Path | None = None,
         status: str | None = None,
         error_message: str | None = None,
+        metadata_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         batch = self.get_batch(batch_id)
         next_status = status or batch["status"]
@@ -694,6 +854,8 @@ class Database:
             values["plate_stl_path"] = str(plate_stl_path)
         if gcode_path is not None:
             values["gcode_path"] = str(gcode_path)
+        if metadata_payload is not None:
+            values["metadata_json"] = json.dumps(metadata_payload, ensure_ascii=False)
 
         with self.engine.begin() as conn:
             conn.execute(print_batches.update().where(print_batches.c.id == batch_id).values(**values))
@@ -769,6 +931,61 @@ class Database:
             "orders_updated": len(order_ids),
         }
 
+    def latest_blank_batch(self, statuses_filter: Iterable[str] | None = None) -> dict[str, Any] | None:
+        with self.engine.connect() as conn:
+            query = select(print_batches.c.id).where(print_batches.c.kind == "blank")
+            if statuses_filter is not None:
+                query = query.where(print_batches.c.status.in_(list(statuses_filter)))
+            batch_id = conn.execute(
+                query.order_by(print_batches.c.created_at.desc()).limit(1)
+            ).scalar()
+        return self.get_batch(batch_id) if batch_id is not None else None
+
+    def latest_printed_blank_batch(self) -> dict[str, Any] | None:
+        return self.latest_blank_batch([statuses.PRINTED])
+
+    def count_overlay_batches_for_blank(self, blank_batch_id: str) -> int:
+        with self.engine.connect() as conn:
+            batch_ids = list(
+                conn.execute(
+                    select(print_batches.c.id).where(
+                        and_(
+                            print_batches.c.kind == "overlay",
+                            print_batches.c.parent_batch_id == blank_batch_id,
+                            print_batches.c.status != statuses.ERROR,
+                        )
+                    )
+                ).scalars()
+            )
+        return len(batch_ids)
+
+    def overlay_batches_for_blank(self, blank_batch_id: str) -> list[dict[str, Any]]:
+        with self.engine.connect() as conn:
+            batch_ids = list(
+                conn.execute(
+                    select(print_batches.c.id)
+                    .where(
+                        and_(
+                            print_batches.c.kind == "overlay",
+                            print_batches.c.parent_batch_id == blank_batch_id,
+                            print_batches.c.status != statuses.ERROR,
+                        )
+                    )
+                    .order_by(print_batches.c.slot_index.asc(), print_batches.c.created_at.asc())
+                ).scalars()
+            )
+        return [self.get_batch(batch_id) for batch_id in batch_ids]
+
+    def next_queued_overlay_batch(self) -> dict[str, Any] | None:
+        with self.engine.connect() as conn:
+            batch_id = conn.execute(
+                select(print_batches.c.id)
+                .where(and_(print_batches.c.kind == "overlay", print_batches.c.status == statuses.QUEUED))
+                .order_by(print_batches.c.created_at.asc())
+                .limit(1)
+            ).scalar()
+        return self.get_batch(batch_id) if batch_id is not None else None
+
     def get_batch(self, batch_id: str) -> dict[str, Any]:
         with self.engine.connect() as conn:
             batch_row = conn.execute(select(print_batches).where(print_batches.c.id == batch_id)).mappings().first()
@@ -779,7 +996,10 @@ class Database:
                     print_batch_items.c.position_x_mm,
                     print_batch_items.c.position_y_mm,
                     orders.c.customer_name,
+                    orders.c.order_number,
                     orders.c.car_number,
+                    orders.c.print_line_1,
+                    orders.c.print_line_2,
                     orders.c.status,
                     orders.c.design_name,
                     orders.c.size_label,
@@ -813,6 +1033,15 @@ class Database:
 
     def _batch_from_row(self, row: Mapping[str, Any], items: list[Mapping[str, Any]]) -> dict[str, Any]:
         batch = dict(row)
+        metadata_json = batch.pop("metadata_json", None)
+        if batch.get("kind") in (None, ""):
+            batch["kind"] = "order"
+        if batch.get("slot_index") is not None:
+            batch["slot_index"] = int(batch["slot_index"])
+        try:
+            batch["metadata"] = json.loads(metadata_json) if metadata_json else {}
+        except json.JSONDecodeError:
+            batch["metadata"] = {}
         batch["status_label"] = statuses.STATUS_LABELS.get(batch["status"], batch["status"])
         batch["items"] = [dict(item) for item in items]
         return batch

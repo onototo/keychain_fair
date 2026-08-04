@@ -45,12 +45,30 @@ def _env_int(key: str, default: int) -> int:
     return int(value)
 
 
+BLANK_SIZE_ALIASES = {
+    "compact": "compact",
+    "medium": "standard",
+    "standard": "standard",
+}
+
+
+def normalize_blank_size_id(value: Any) -> str:
+    raw = str(value or "compact").strip().lower()
+    if raw not in BLANK_SIZE_ALIASES:
+        raise ValueError("queue.blank_size_id must be 'compact', 'medium' or 'standard'")
+    return BLANK_SIZE_ALIASES[raw]
+
+
 @dataclass(frozen=True)
 class QueueSettings:
     max_items_per_plate: int
     max_wait_minutes: int
     bed_size_mm: tuple[float, float]
     item_spacing_mm: float
+    blank_size_id: str = "compact"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "blank_size_id", normalize_blank_size_id(self.blank_size_id))
 
 
 @dataclass(frozen=True)
@@ -160,6 +178,7 @@ def load_settings(base_dir: Path | None = None) -> AppSettings:
             max_wait_minutes=int(queue.get("max_wait_minutes", 10)),
             bed_size_mm=(float(bed_size[0]), float(bed_size[1])),
             item_spacing_mm=float(queue.get("item_spacing_mm", 8)),
+            blank_size_id=os.environ.get("BLANK_SIZE_ID") or queue.get("blank_size_id", "compact"),
         ),
         tools=ToolSettings(
             openscad_path=str(os.environ.get("OPENSCAD_PATH") or tools.get("openscad_path", "openscad")),

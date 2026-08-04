@@ -7,6 +7,7 @@ import {
   defaultElementIds,
   defaultSizeId,
   isCustomTextDesign,
+  orderSummary,
   requiresCarNumber,
 } from "./flow.js";
 import type { Design, DraftData } from "./types.js";
@@ -77,4 +78,34 @@ test("default helpers keep designs element-free", () => {
 test("custom text helpers use catalog limits and collapse whitespace", () => {
   assert.equal(customTextLimit(customDesign, "standard"), 26);
   assert.equal(cleanCustomText("  Hello    World  "), "Hello World");
+});
+
+test("orderSummary keeps custom text confirmation compact", () => {
+  const data: DraftData = {
+    designId: "classic_plate",
+    sizeId: "standard",
+    elements: [],
+    customerName: "Anna",
+    printLine1: "Hello",
+  };
+
+  assert.equal(
+    orderSummary(customDesign, data),
+    ["Проверьте заказ:", "Текст на брелоке: Hello", "Имя: Anna", "Размер: Standard", "Цена: 15 BYN"].join("\n"),
+  );
+});
+
+test("orderSummary keeps car number before customer name", () => {
+  const data: DraftData = {
+    designId: "stacked_plate_classic",
+    sizeId: "standard",
+    elements: [],
+    customerName: "Nikita",
+    carNumber: "1234 AB-7",
+  };
+
+  assert.equal(
+    orderSummary(numberDesign, data),
+    ["Проверьте заказ:", "Авто: 1234 AB-7", "Имя: Nikita", "Размер: Standard", "Цена: 17 BYN"].join("\n"),
+  );
 });

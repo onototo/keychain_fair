@@ -34,6 +34,24 @@ class FakeGenerator(OpenScadModelGenerator):
         scad.write_text("// fake\n", encoding="utf-8")
         return AdapterResult(True, "fake stl", stl, {"wrapper_scad_path": str(scad)})
 
+    def generate_blank_stl(self, blank_id, order, design):
+        blank_dir = self.settings.generated_dir / "blanks" / blank_id
+        blank_dir.mkdir(parents=True, exist_ok=True)
+        stl = blank_dir / f"{blank_id}.stl"
+        scad = blank_dir / f"{blank_id}.scad"
+        stl.write_text("solid blank\nendsolid blank\n", encoding="utf-8")
+        scad.write_text("// blank\n", encoding="utf-8")
+        return AdapterResult(True, "fake blank", stl, {"wrapper_scad_path": str(scad)})
+
+    def generate_overlay_stl(self, order, design):
+        overlay_dir = self.settings.generated_dir / "overlays" / order["id"]
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+        stl = overlay_dir / f"{order['id']}_overlay.stl"
+        scad = overlay_dir / f"{order['id']}_overlay.scad"
+        stl.write_text("solid overlay\nendsolid overlay\n", encoding="utf-8")
+        scad.write_text("// overlay\n", encoding="utf-8")
+        return AdapterResult(True, "fake overlay", stl, {"wrapper_scad_path": str(scad)})
+
     def combine_batch_stl(self, batch_id, layout_items):
         batch_dir = self.settings.generated_dir / "batches" / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
@@ -66,14 +84,47 @@ class FakeSlicer(CuraEngineSlicer):
     def __init__(self, settings):
         super().__init__(settings)
         self.pause_heights = []
+        self.blank_slices = []
+        self.overlay_safety = []
 
-    def slice_plate(self, plate_stl_path, batch_id, filament_change_height_mm=None):
-        self.pause_heights.append(filament_change_height_mm)
+    def slice_plate(self, plate_stl_path, batch_id, filament_change_height_mm=None, *, insert_filament_change=True, settings_overrides=None):
+        if insert_filament_change:
+            self.pause_heights.append(filament_change_height_mm)
+        else:
+            self.blank_slices.append(batch_id)
         batch_dir = self.settings.generated_dir / "batches" / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
         gcode = batch_dir / f"{batch_id}.gcode"
         gcode.write_text("; fake gcode\n", encoding="utf-8")
         return AdapterResult(True, "fake gcode", gcode)
+
+    def slice_overlay(self, plate_stl_path, batch_id, safety):
+        self.overlay_safety.append(safety)
+        batch_dir = self.settings.generated_dir / "batches" / batch_id
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        gcode = batch_dir / f"{batch_id}.gcode"
+        safe_z = safety.base_thickness_mm + safety.relief_height_mm + safety.safety_clearance_mm
+        gcode.write_text(
+            "\n".join(
+                [
+                    "; KEYCHAIN_FAIR_OVERLAY_START",
+                    "G90",
+                    "M82",
+                    f"G0 Z{safe_z:.3f} F3000",
+                    f"G0 X{safety.slot_x_mm + 20:.3f} Y{safety.slot_y_mm + 15:.3f} Z{safe_z:.3f}",
+                    f"G0 Z{safety.base_thickness_mm + 0.2:.3f}",
+                    f"G1 X{safety.slot_x_mm + 30:.3f} Y{safety.slot_y_mm + 15:.3f} E1.0",
+                    f"G0 Z{safe_z:.3f}",
+                    f"G0 X0 Y{safety.bed_size_mm[1]:.3f}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        analysis = self.analyze_overlay_gcode(gcode, safety)
+        if not analysis.success:
+            return AdapterResult(False, analysis.message, gcode, analysis.extra)
+        return AdapterResult(True, "fake overlay gcode", gcode, analysis.extra)
 
 
 class FakePrinter(OctoPrintController):
@@ -127,6 +178,7 @@ def make_settings(
     slicer_enabled: bool = False,
     octoprint_enabled: bool = False,
     base_height_mm: float = 3.2,
+    blank_size_id: str = "compact",
 ) -> AppSettings:
     return AppSettings(
         base_dir=PROJECT_ROOT,
@@ -142,7 +194,13 @@ def make_settings(
         database_url=None,
         generated_dir=tmp_path / "generated",
         designs_dir=PROJECT_ROOT / "designs",
-        queue=QueueSettings(max_items_per_plate=4, max_wait_minutes=10, bed_size_mm=(220, 220), item_spacing_mm=8),
+        queue=QueueSettings(
+            max_items_per_plate=4,
+            max_wait_minutes=10,
+            bed_size_mm=(220, 220),
+            item_spacing_mm=8,
+            blank_size_id=blank_size_id,
+        ),
         tools=ToolSettings(
             openscad_path="fake",
             openscad_timeout_seconds=1,
@@ -221,7 +279,7 @@ def order_payload(
     customer_name: str = "Anna",
     car_number: str = "1234 AB-7",
     design_id: str = "classic_plate",
-    size_id: str = "standard",
+    size_id: str = "compact",
     elements: list[str] | None = None,
     print_line_1: str = "Hello",
     print_line_2: str = "",
@@ -258,3 +316,40 @@ def create_paid_order(client, order_key="test-order-flow-1", **overrides) -> str
 
 def create_unpaid_order(client, order_key="test-unpaid-order") -> str:
     return create_order(client, idempotency_key=order_key)
+
+
+def seed_printed_blank_batch(app, slot_count: int = 18) -> str:
+    width = 56.0
+    height = 24.0
+    spacing = app.state.settings.queue.item_spacing_mm
+    bed_width, bed_height = app.state.settings.queue.bed_size_mm
+    slots = []
+    y = spacing + 5.0
+    while y + height + spacing <= bed_height + 0.001 and len(slots) < slot_count:
+        x = spacing
+        while x + width + spacing <= bed_width + 0.001 and len(slots) < slot_count:
+            slots.append(
+                {
+                    "index": len(slots),
+                    "x_mm": round(x, 3),
+                    "y_mm": round(y, 3),
+                    "width_mm": width,
+                    "height_mm": height,
+                    "print_enabled": True,
+                }
+            )
+            x += width + spacing
+        y += height + spacing
+    batch = app.state.database.create_blank_batch(
+        slots,
+        metadata_payload={
+            "blank_width_mm": width,
+            "blank_height_mm": height,
+            "blank_thickness_mm": 2.1,
+            "blank_size_id": "compact",
+            "blank_size_label": "Компактный",
+            "slot_count": len(slots),
+        },
+    )
+    app.state.database.update_batch_files(batch["id"], status="printed")
+    return batch["id"]

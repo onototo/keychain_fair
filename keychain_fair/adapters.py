@@ -33,6 +33,8 @@ FILAMENT_CHANGE_RETRACT_MM = 40.0
 FILAMENT_CHANGE_Z_LIFT_MM = 100.0
 FILAMENT_CHANGE_MOVE_FEEDRATE = 3000
 Z_MOVE_RE = re.compile(r"^(?:G0|G1)\b", re.IGNORECASE)
+X_VALUE_RE = re.compile(r"(?:^|\s)X(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+Y_VALUE_RE = re.compile(r"(?:^|\s)Y(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 Z_VALUE_RE = re.compile(r"(?:^|\s)Z(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 E_VALUE_RE = re.compile(r"(?:^|\s)E(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 
@@ -43,6 +45,18 @@ class AdapterResult:
     message: str
     output_path: Path | None = None
     extra: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class OverlaySafetySpec:
+    base_thickness_mm: float
+    relief_height_mm: float
+    safety_clearance_mm: float
+    slot_x_mm: float
+    slot_y_mm: float
+    slot_width_mm: float
+    slot_height_mm: float
+    bed_size_mm: tuple[float, float]
 
 
 def _resolve_executable(command: str) -> str | None:
@@ -257,6 +271,22 @@ class OpenScadModelGenerator:
         order_dir = self.settings.generated_dir / "orders" / order["id"]
         return self._generate_stl(ready, order, design, order_dir, order["id"], "STL created")
 
+    def generate_blank_stl(self, blank_id: str, order: dict[str, Any], design: dict[str, Any]) -> AdapterResult:
+        ready = self.check_ready()
+        if not ready.success:
+            return ready
+
+        blank_dir = self.settings.generated_dir / "blanks" / blank_id
+        return self._generate_stl(ready, order, design, blank_dir, blank_id, "Blank STL created", module_name="keychain_blank")
+
+    def generate_overlay_stl(self, order: dict[str, Any], design: dict[str, Any]) -> AdapterResult:
+        ready = self.check_ready()
+        if not ready.success:
+            return ready
+
+        overlay_dir = self.settings.generated_dir / "overlays" / order["id"]
+        return self._generate_stl(ready, order, design, overlay_dir, f"{order['id']}_overlay", "Overlay STL created", module_name="keychain_overlay")
+
     def generate_preview_stl(
         self,
         preview_id: str,
@@ -321,10 +351,11 @@ class OpenScadModelGenerator:
         target_dir: Path,
         file_stem: str,
         success_message: str,
+        module_name: str = "keychain",
     ) -> AdapterResult:
         target_dir.mkdir(parents=True, exist_ok=True)
         stl_path = target_dir / f"{file_stem}.stl"
-        prepared = self._write_order_wrapper_scad(ready, order, design, target_dir, file_stem)
+        prepared = self._write_order_wrapper_scad(ready, order, design, target_dir, file_stem, module_name=module_name)
         wrapper_path = prepared["wrapper_path"]
         text_layout = prepared["text_layout"]
         command = [
@@ -350,6 +381,7 @@ class OpenScadModelGenerator:
         design: dict[str, Any],
         target_dir: Path,
         file_stem: str,
+        module_name: str = "keychain",
     ) -> dict[str, Any]:
         target_dir.mkdir(parents=True, exist_ok=True)
         wrapper_path = target_dir / f"{file_stem}.scad"
@@ -384,7 +416,7 @@ class OpenScadModelGenerator:
             "\n".join(
                 [
                     f'use <{template_path.as_posix()}>',
-                    f"{call_prefix}keychain(",
+                    f"{call_prefix}{module_name}(",
                     f"    {_scad_string(order['customer_name'])},",
                     f"    {_scad_string(print_line_1)},",
                     f"    {_scad_string(print_line_2)},",
@@ -565,8 +597,10 @@ class OpenScadModelGenerator:
             try:
                 source_triangles = _read_stl_triangles(stl_path)
                 bounds = stl_bounds(stl_path)
-                x_offset = physical_x_mm - bounds["min_x_mm"] - bed_width / 2
-                y_offset = physical_y_mm - bounds["min_y_mm"] - bed_height / 2
+                origin_x = _safe_float(order.get("stl_origin_x_mm"), bounds["min_x_mm"])
+                origin_y = _safe_float(order.get("stl_origin_y_mm"), bounds["min_y_mm"])
+                x_offset = physical_x_mm - origin_x - bed_width / 2
+                y_offset = physical_y_mm - origin_y - bed_height / 2
                 lines.append(f"translate([{x_offset}, {y_offset}, 0]) import({_scad_string(stl_path.as_posix())});")
                 for normal, vertices in source_triangles:
                     translated = [(x + x_offset, y + y_offset, z) for x, y, z in vertices]
@@ -610,6 +644,9 @@ class CuraEngineSlicer:
         plate_stl_path: Path,
         batch_id: str,
         filament_change_height_mm: float | None = None,
+        *,
+        insert_filament_change: bool = True,
+        settings_overrides: dict[str, Any] | None = None,
     ) -> AdapterResult:
         if not self.settings.slicer.enabled:
             return AdapterResult(False, "Slicing РІС‹РєР»СЋС‡РµРЅ РІ config/app.yaml")
@@ -626,7 +663,9 @@ class CuraEngineSlicer:
             return profile_result
         profile = profile_result.extra or {}
         cura = profile.get("cura_engine", {}) if isinstance(profile.get("cura_engine"), dict) else {}
-        settings = cura.get("settings", {}) if isinstance(cura.get("settings"), dict) else {}
+        settings = dict(cura.get("settings", {}) if isinstance(cura.get("settings"), dict) else {})
+        if settings_overrides:
+            settings.update(settings_overrides)
         extruder_settings = cura.get("extruder_settings", {}) if isinstance(cura.get("extruder_settings"), dict) else {}
 
         batch_dir = self.settings.generated_dir / "batches" / batch_id
@@ -681,13 +720,60 @@ class CuraEngineSlicer:
             return AdapterResult(False, f"CuraEngine failed: {stderr[:1000]}")
 
         self._replace_header_from_stdout(output_gcode, completed.stdout)
-        pause_height_mm = self.settings.model.base_height_mm if filament_change_height_mm is None else filament_change_height_mm
-        self._insert_filament_change_pause(output_gcode, pause_height_mm)
+        if insert_filament_change:
+            pause_height_mm = self.settings.model.base_height_mm if filament_change_height_mm is None else filament_change_height_mm
+            self._insert_filament_change_pause(output_gcode, pause_height_mm)
         if not self._has_extrusion_moves(output_gcode):
             return AdapterResult(False, "CuraEngine produced G-code without extrusion moves")
 
         return AdapterResult(True, "G-code СЃРѕР·РґР°РЅ", output_gcode)
 
+
+    def slice_overlay(
+        self,
+        plate_stl_path: Path,
+        batch_id: str,
+        safety: OverlaySafetySpec,
+    ) -> AdapterResult:
+        safe_z = safety.base_thickness_mm + safety.relief_height_mm + safety.safety_clearance_mm
+        result = self.slice_plate(
+            plate_stl_path,
+            batch_id,
+            insert_filament_change=False,
+            settings_overrides={
+                "adhesion_type": "none",
+                "skirt_line_count": 0,
+                "brim_width": 0,
+                "machine_start_gcode": "\n".join(
+                    [
+                        "M140 S60",
+                        "M104 S210",
+                        "M190 S55",
+                        "M109 S210",
+                        "M104 S205",
+                        "G90",
+                        "M82",
+                        f"G0 Z{safe_z:.3f} F3000",
+                    ]
+                ),
+                "machine_end_gcode": "\n".join(
+                    [
+                        "G90",
+                        f"G0 Z{safe_z:.3f} F3000",
+                        f"G0 X0 Y{safety.bed_size_mm[1]:.3f} F3000",
+                        "M117 Overlay done",
+                    ]
+                ),
+            },
+        )
+        if not result.success or not result.output_path:
+            return result
+
+        self._postprocess_overlay_gcode(result.output_path, safety)
+        analysis = self.analyze_overlay_gcode(result.output_path, safety)
+        if not analysis.success:
+            return AdapterResult(False, analysis.message, result.output_path, analysis.extra)
+        return AdapterResult(True, "Overlay G-code created and safety-checked", result.output_path, analysis.extra)
 
     def _load_profile(self) -> AdapterResult:
         if not self.settings.slicer.profile_path.exists():
@@ -855,6 +941,218 @@ class CuraEngineSlicer:
         extrusion_move = re.compile(r"^G1\b.*\bE-?\d", re.IGNORECASE)
         with gcode_path.open("r", encoding="utf-8", errors="ignore") as handle:
             return any(extrusion_move.search(line) for line in handle)
+
+    def _param(self, command: str, pattern: re.Pattern[str]) -> float | None:
+        match = pattern.search(command)
+        return float(match.group(1)) if match else None
+
+    def _replace_param(self, command: str, key: str, value: float) -> str:
+        pattern = re.compile(rf"(^|\s){key}-?\d+(?:\.\d+)?", re.IGNORECASE)
+        replacement = f" {key}{value:.3f}".rstrip("0").rstrip(".")
+        if pattern.search(command):
+            return pattern.sub(replacement, command, count=1).strip()
+        return f"{command} {key}{value:.3f}".rstrip("0").rstrip(".")
+
+    def _postprocess_overlay_gcode(self, gcode_path: Path, safety: OverlaySafetySpec) -> None:
+        safe_z = safety.base_thickness_mm + safety.relief_height_mm + safety.safety_clearance_mm
+        lines = gcode_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        updated: list[str] = [
+            "; KEYCHAIN_FAIR_OVERLAY_START",
+            f"; base_thickness_mm={safety.base_thickness_mm:.3f}",
+            f"; relief_height_mm={safety.relief_height_mm:.3f}",
+            f"; safety_clearance_mm={safety.safety_clearance_mm:.3f}",
+        ]
+        current_z = safe_z
+        current_x = 0.0
+        current_y = 0.0
+        print_z = safety.base_thickness_mm
+        extruder_absolute = True
+        e_position = 0.0
+        overlay_started = False
+
+        def inside_slot(x_mm: float, y_mm: float) -> bool:
+            return (
+                safety.slot_x_mm - 0.5 <= x_mm <= safety.slot_x_mm + safety.slot_width_mm + 0.5
+                and safety.slot_y_mm - 0.5 <= y_mm <= safety.slot_y_mm + safety.slot_height_mm + 0.5
+            )
+
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            command, separator, comment = raw_line.partition(";")
+            clean = command.strip()
+            upper = clean.upper()
+            if not clean:
+                if stripped.startswith(";"):
+                    updated.append(raw_line)
+                continue
+            if re.match(r"^M104\b", upper) and re.search(r"\bS0(?:\.0+)?\b", upper):
+                continue
+            if re.match(r"^M140\b", upper) and re.search(r"\bS0(?:\.0+)?\b", upper):
+                continue
+            if re.match(r"^M84\b", upper):
+                continue
+            if re.match(r"^G(?:28|29)\b", upper):
+                updated.append(f"; skipped overlay homing/probing: {stripped}")
+                continue
+            if re.match(r"^M82\b", upper):
+                extruder_absolute = True
+                updated.append(raw_line)
+                continue
+            if re.match(r"^M83\b", upper):
+                extruder_absolute = False
+                updated.append(raw_line)
+                continue
+
+            if not Z_MOVE_RE.search(clean):
+                updated.append(raw_line)
+                continue
+
+            x_value = self._param(clean, X_VALUE_RE)
+            y_value = self._param(clean, Y_VALUE_RE)
+            z_value = self._param(clean, Z_VALUE_RE)
+            e_value = self._param(clean, E_VALUE_RE)
+            has_xy = x_value is not None or y_value is not None
+            next_x = current_x if x_value is None else x_value
+            next_y = current_y if y_value is None else y_value
+            next_e_position = e_position
+            is_extruding = False
+            if e_value is not None:
+                is_extruding = e_value > e_position if extruder_absolute else e_value > 0
+                next_e_position = e_value if extruder_absolute else e_position + e_value
+
+            transformed = clean
+            if z_value is not None:
+                print_z = z_value + safety.base_thickness_mm
+                transformed = self._replace_param(transformed, "Z", print_z)
+
+            if is_extruding and not overlay_started and not inside_slot(next_x, next_y):
+                updated.append(f"; skipped startup extrusion outside blank slot: {stripped}")
+                if extruder_absolute:
+                    updated.append(f"G92 E{next_e_position:.5f} ; keep slicer E position after skipped startup extrusion")
+                e_position = next_e_position
+                continue
+
+            if has_xy and not is_extruding:
+                if current_z < safe_z - 0.001:
+                    updated.append(f"G0 Z{safe_z:.3f} F3000 ; overlay safe lift")
+                transformed = self._replace_param(transformed, "Z", safe_z)
+                current_z = safe_z
+            elif is_extruding:
+                if current_z > print_z + 0.001 and z_value is None:
+                    updated.append(f"G0 Z{print_z:.3f} F1800 ; lower to overlay print height")
+                    current_z = print_z
+                elif z_value is not None:
+                    current_z = print_z
+                overlay_started = True
+            elif z_value is not None:
+                current_z = print_z
+
+            e_position = next_e_position
+            if has_xy:
+                current_x = next_x
+                current_y = next_y
+            updated.append(transformed + (f" ;{comment}" if separator else ""))
+
+        updated.extend(
+            [
+                "G90",
+                f"G0 Z{safe_z:.3f} F3000 ; overlay park lift",
+                f"G0 X0 Y{safety.bed_size_mm[1]:.3f} F3000 ; overlay park",
+                "M117 Overlay done",
+                "; KEYCHAIN_FAIR_OVERLAY_END",
+            ]
+        )
+        gcode_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+
+    def analyze_overlay_gcode(self, gcode_path: Path, safety: OverlaySafetySpec) -> AdapterResult:
+        safe_z = safety.base_thickness_mm + safety.relief_height_mm + safety.safety_clearance_mm
+        slot_min_x = safety.slot_x_mm - 0.5
+        slot_min_y = safety.slot_y_mm - 0.5
+        slot_max_x = safety.slot_x_mm + safety.slot_width_mm + 0.5
+        slot_max_y = safety.slot_y_mm + safety.slot_height_mm + 0.5
+        current_x = 0.0
+        current_y = 0.0
+        current_z = safe_z
+        e_position = 0.0
+        extruder_absolute = True
+        travel_moves = 0
+        extrusion_moves = 0
+        failures: list[str] = []
+
+        for line_number, raw_line in enumerate(gcode_path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+            command = raw_line.split(";", 1)[0].strip()
+            if not command:
+                continue
+            upper = command.upper()
+            if re.match(r"^G(?:28|29)\b", upper):
+                failures.append(f"line {line_number}: homing/probing is not allowed in overlay G-code")
+            if re.match(r"^M104\b", upper) and re.search(r"\bS0(?:\.0+)?\b", upper):
+                failures.append(f"line {line_number}: hotend shutdown is not allowed in overlay G-code")
+            if re.match(r"^M140\b", upper) and re.search(r"\bS0(?:\.0+)?\b", upper):
+                failures.append(f"line {line_number}: bed shutdown is not allowed in overlay G-code")
+            if re.match(r"^M82\b", upper):
+                extruder_absolute = True
+                continue
+            if re.match(r"^M83\b", upper):
+                extruder_absolute = False
+                continue
+            if not Z_MOVE_RE.search(command):
+                continue
+
+            x_value = self._param(command, X_VALUE_RE)
+            y_value = self._param(command, Y_VALUE_RE)
+            z_value = self._param(command, Z_VALUE_RE)
+            e_value = self._param(command, E_VALUE_RE)
+            next_x = current_x if x_value is None else x_value
+            next_y = current_y if y_value is None else y_value
+            next_z = current_z if z_value is None else z_value
+            is_xy = x_value is not None or y_value is not None
+            is_extruding = False
+            if e_value is not None:
+                is_extruding = e_value > e_position if extruder_absolute else e_value > 0
+                e_position = e_value if extruder_absolute else e_position + e_value
+
+            if is_xy and not is_extruding:
+                travel_moves += 1
+                if min(current_z, next_z) < safe_z - 0.001:
+                    failures.append(
+                        f"line {line_number}: travel move below safe Z {safe_z:.3f} mm"
+                    )
+            if is_extruding:
+                extrusion_moves += 1
+                if next_z < safety.base_thickness_mm - 0.001:
+                    failures.append(
+                        f"line {line_number}: extrusion below blank surface {safety.base_thickness_mm:.3f} mm"
+                    )
+                if not (
+                    slot_min_x <= current_x <= slot_max_x
+                    and slot_min_y <= current_y <= slot_max_y
+                    and slot_min_x <= next_x <= slot_max_x
+                    and slot_min_y <= next_y <= slot_max_y
+                ):
+                    failures.append(
+                        f"line {line_number}: extrusion outside slot bounds from X{current_x:.3f} Y{current_y:.3f} to X{next_x:.3f} Y{next_y:.3f}"
+                    )
+
+            current_x = next_x
+            current_y = next_y
+            current_z = next_z
+
+        if failures:
+            return AdapterResult(
+                False,
+                "Overlay G-code collision check failed: " + " | ".join(failures[:5]),
+                gcode_path,
+                {"failures": failures, "travel_moves": travel_moves, "extrusion_moves": extrusion_moves, "safe_z_mm": safe_z},
+            )
+        if extrusion_moves == 0:
+            return AdapterResult(False, "Overlay G-code collision check failed: no extrusion moves", gcode_path)
+        return AdapterResult(
+            True,
+            "Overlay G-code collision check passed",
+            gcode_path,
+            {"travel_moves": travel_moves, "extrusion_moves": extrusion_moves, "safe_z_mm": round(safe_z, 3)},
+        )
 
 
 class OctoPrintController:
