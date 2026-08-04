@@ -30,6 +30,10 @@ const printerWidget = document.querySelector("#printerWidget");
 const printerOnline = document.querySelector("#printerOnline");
 const printerPhase = document.querySelector("#printerPhase");
 const printerTime = document.querySelector("#printerTime");
+const dockerWidget = document.querySelector("#dockerWidget");
+const dockerOnline = document.querySelector("#dockerOnline");
+const dockerPhase = document.querySelector("#dockerPhase");
+const dockerDetail = document.querySelector("#dockerDetail");
 const filamentNotice = document.querySelector("#filamentNotice");
 const batchStatus = document.querySelector("#batchStatus");
 const bedMeta = document.querySelector("#bedMeta");
@@ -45,6 +49,12 @@ const PRINTER_WIDGET_CLASSES = [
   "printer-heating",
   "printer-printing",
   "printer-done-printing",
+];
+
+const DOCKER_WIDGET_CLASSES = [
+  "docker-online",
+  "docker-offline",
+  "docker-running",
 ];
 
 const BLANK_SLOT_STATES = [
@@ -386,6 +396,34 @@ async function refreshPrinterStatus() {
   }
 }
 
+function renderDockerStatus(status) {
+  if (!dockerWidget) return;
+  const online = Boolean(status.online);
+  const state = status.state || (online ? "running" : "offline");
+  const stateClass = `docker-${state.replaceAll("_", "-")}`;
+
+  dockerWidget.classList.remove(...DOCKER_WIDGET_CLASSES);
+  dockerWidget.classList.add(online ? "docker-online" : "docker-offline", stateClass);
+  dockerOnline.textContent = status.online_label || (online ? "online" : "offline");
+  dockerPhase.textContent = status.label || (online ? "docker server" : "offline");
+  dockerDetail.textContent = status.message || (online ? "Docker daemon доступен" : "Docker daemon недоступен");
+  dockerWidget.title = status.message || "";
+}
+
+async function refreshDockerStatus() {
+  try {
+    renderDockerStatus(await api("/api/admin/docker/status"));
+  } catch (error) {
+    renderDockerStatus({
+      online: false,
+      online_label: "offline",
+      state: "offline",
+      label: "offline",
+      message: error.message,
+    });
+  }
+}
+
 function chooseActiveBatch(batches) {
   const selectableBatches = batches.filter((batch) => batch.status !== "error" && !batchHasBlockedOrders(batch));
   if (activeBatch) {
@@ -698,6 +736,7 @@ async function refreshAll() {
     await refreshOrders();
     await refreshTools();
     await refreshPrinterStatus();
+    await refreshDockerStatus();
     await refreshBatches();
     adminMessage.textContent = "";
     adminMessage.classList.remove("error");

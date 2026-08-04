@@ -599,14 +599,20 @@ label {
   padding-right: 248px;
 }
 
-.printer-widget {
+.admin-status-stack {
   position: fixed;
   top: 14px;
   right: 14px;
   z-index: 20;
   display: grid;
-  gap: 6px;
+  gap: 10px;
   width: 220px;
+}
+
+.printer-widget {
+  display: grid;
+  gap: 6px;
+  width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -648,11 +654,14 @@ label {
 
 .printer-widget.printer-online .printer-dot,
 .printer-widget.printer-waiting .printer-dot,
-.printer-widget.printer-done-printing .printer-dot {
+.printer-widget.printer-done-printing .printer-dot,
+.docker-widget.docker-online .printer-dot,
+.docker-widget.docker-running .printer-dot {
   background: var(--ok);
 }
 
-.printer-widget.printer-offline .printer-dot {
+.printer-widget.printer-offline .printer-dot,
+.docker-widget.docker-offline .printer-dot {
   background: var(--error);
 }
 
@@ -669,13 +678,9 @@ label {
 }
 
 .filament-notice {
-  position: fixed;
-  top: 118px;
-  right: 14px;
-  z-index: 20;
   display: grid;
   gap: 6px;
-  width: 220px;
+  width: 100%;
   padding: 12px 14px;
   border: 1px solid #f0b35b;
   border-radius: 8px;
@@ -1225,16 +1230,14 @@ label {
     flex: 1 1 150px;
   }
 
-  .printer-widget {
+  .admin-status-stack {
     position: static;
     width: 100%;
     margin-bottom: 16px;
   }
 
   .filament-notice {
-    position: static;
     width: 100%;
-    margin-bottom: 16px;
   }
 
   .orders-table {

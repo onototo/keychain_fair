@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
 import secrets
+import shutil
+import subprocess
 import time
 from typing import Any
 import uuid
@@ -233,6 +236,99 @@ def _printer_status_payload(print_controller: OctoPrintController) -> dict[str, 
         "busy": is_busy,
         "paused": is_paused,
         "filament_change_required": is_paused and has_print_progress,
+    }
+
+
+def _is_running_inside_docker() -> bool:
+    if Path("/.dockerenv").exists():
+        return True
+    cgroup_path = Path("/proc/1/cgroup")
+    if not cgroup_path.exists():
+        return False
+    try:
+        cgroup = cgroup_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return any(marker in cgroup for marker in ["docker", "containerd", "kubepods"])
+
+
+def _docker_status_payload(base_dir: Path) -> dict[str, Any]:
+    if _is_running_inside_docker():
+        return {
+            "online": True,
+            "online_label": "online",
+            "state": "running",
+            "label": "docker server",
+            "message": "app runs in Docker container",
+        }
+
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        return {
+            "online": False,
+            "online_label": "offline",
+            "state": "offline",
+            "label": "offline",
+            "message": "Docker CLI not found",
+        }
+
+    run_kwargs: dict[str, Any] = {
+        "cwd": base_dir,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 2.0,
+    }
+    if os.name == "nt":
+        run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    try:
+        completed = subprocess.run(
+            [docker_path, "info", "--format", "{{json .ServerVersion}}"],
+            **run_kwargs,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "online": False,
+            "online_label": "offline",
+            "state": "offline",
+            "label": "offline",
+            "message": "Docker daemon response timed out",
+        }
+    except OSError as exc:
+        return {
+            "online": False,
+            "online_label": "offline",
+            "state": "offline",
+            "label": "offline",
+            "message": f"Docker check failed: {exc}",
+        }
+
+    raw_stdout = (completed.stdout or "").strip()
+    raw_stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        message = (raw_stderr or raw_stdout or "docker info failed").splitlines()[0]
+        return {
+            "online": False,
+            "online_label": "offline",
+            "state": "offline",
+            "label": "offline",
+            "message": message,
+        }
+
+    try:
+        server_version = json.loads(raw_stdout) if raw_stdout else ""
+    except json.JSONDecodeError:
+        server_version = raw_stdout.strip('"')
+    server_version = str(server_version or "").strip()
+    return {
+        "online": True,
+        "online_label": "online",
+        "state": "running",
+        "label": "docker server",
+        "message": f"server {server_version}" if server_version else "Docker daemon reachable",
+        "server_version": server_version or None,
     }
 
 
@@ -724,6 +820,10 @@ def create_app(
         payload["completed_prints"] = service.complete_printing_batches_if_done(payload)
         payload["overlay_autorun"] = service.start_next_overlay_if_ready()
         return payload
+
+    @app.get("/api/admin/docker/status", dependencies=[Depends(require_admin)])
+    def admin_docker_status() -> dict[str, Any]:
+        return _docker_status_payload(app_settings.base_dir)
 
     @app.get("/api/system/info")
     def system_info() -> dict[str, Any]:

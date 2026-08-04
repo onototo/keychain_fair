@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Панель оператора</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260803-admin-orders-text" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260804-docker-status" />
   </head>
   <body>
     <main id="login" class="login panel">
@@ -55,18 +55,28 @@
         </div>
       </header>
 
-      <aside id="printerWidget" class="printer-widget printer-offline" aria-live="polite">
-        <div class="printer-widget-row">
-          <span id="printerDot" class="printer-dot"></span>
-          <span id="printerOnline">offline</span>
-        </div>
-        <div id="printerPhase" class="printer-phase">waiting</div>
-        <div id="printerTime" class="printer-time">прошло -- / осталось --</div>
-      </aside>
-      <aside id="filamentNotice" class="filament-notice" aria-live="assertive" hidden>
-        <strong>Смена пластика</strong>
-        <span>Печать на паузе. Замените пластик и нажмите «Продолжить печать».</span>
-      </aside>
+      <div class="admin-status-stack" aria-label="Статусы подключений">
+        <aside id="printerWidget" class="printer-widget printer-offline" aria-live="polite">
+          <div class="printer-widget-row">
+            <span id="printerDot" class="printer-dot"></span>
+            <span id="printerOnline">offline</span>
+          </div>
+          <div id="printerPhase" class="printer-phase">waiting</div>
+          <div id="printerTime" class="printer-time">прошло -- / осталось --</div>
+        </aside>
+        <aside id="dockerWidget" class="printer-widget docker-widget docker-offline" aria-live="polite">
+          <div class="printer-widget-row">
+            <span id="dockerDot" class="printer-dot"></span>
+            <span id="dockerOnline">offline</span>
+          </div>
+          <div id="dockerPhase" class="printer-phase">docker server</div>
+          <div id="dockerDetail" class="printer-time">Docker daemon --</div>
+        </aside>
+        <aside id="filamentNotice" class="filament-notice" aria-live="assertive" hidden>
+          <strong>Смена пластика</strong>
+          <span>Печать на паузе. Замените пластик и нажмите «Продолжить печать».</span>
+        </aside>
+      </div>
 
       <section class="admin-layout">
         <div class="admin-main">
@@ -140,6 +150,6 @@
       </section>
     </main>
 
-    <script src="/static/admin.js?v=20260803-admin-orders-text"></script>
+    <script src="/static/admin.js?v=20260804-docker-status"></script>
   </body>
 </html>
