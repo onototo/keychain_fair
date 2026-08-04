@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## Quick Project Guide
+
+- Read `AGENTS_QUICK_GUIDE.md` after this file for the current short project handoff: startup scripts, blank sizes, slot states, overlay rules, slicer invariants, and verification commands.
+
 ## Encoding
 
 - Treat every project text file as UTF-8 without BOM.
