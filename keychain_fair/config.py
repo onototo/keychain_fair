@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
-from typing import Any
 
 import yaml
 
@@ -19,9 +18,7 @@ def _read_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def _resolve(base_dir: Path, value: str | Path) -> Path:
@@ -31,13 +28,6 @@ def _resolve(base_dir: Path, value: str | Path) -> Path:
     return base_dir / path
 
 
-def _env_bool(key: str, default: bool) -> bool:
-    value = os.environ.get(key)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _env_int(key: str, default: int) -> int:
     value = os.environ.get(key)
     if value is None or not value.strip():
@@ -45,166 +35,40 @@ def _env_int(key: str, default: int) -> int:
     return int(value)
 
 
-BLANK_SIZE_ALIASES = {
-    "compact": "compact",
-    "medium": "standard",
-    "standard": "standard",
-}
-
-
-def normalize_blank_size_id(value: Any) -> str:
-    raw = str(value or "compact").strip().lower()
-    if raw not in BLANK_SIZE_ALIASES:
-        raise ValueError("queue.blank_size_id must be 'compact', 'medium' or 'standard'")
-    return BLANK_SIZE_ALIASES[raw]
-
-
-@dataclass(frozen=True)
-class QueueSettings:
-    max_items_per_plate: int
-    max_wait_minutes: int
-    bed_size_mm: tuple[float, float]
-    item_spacing_mm: float
-    blank_size_id: str = "compact"
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "blank_size_id", normalize_blank_size_id(self.blank_size_id))
-
-
-@dataclass(frozen=True)
-class ToolSettings:
-    openscad_path: str
-    openscad_timeout_seconds: int
-    cura_engine_path: str
-    cura_timeout_seconds: int
-
-
-@dataclass(frozen=True)
-class SlicerSettings:
-    enabled: bool
-    profile_path: Path
-
-
-@dataclass(frozen=True)
-class ModelSettings:
-    base_height_mm: float
-
-
-@dataclass(frozen=True)
-class OctoPrintSettings:
-    enabled: bool
-    base_url: str
-    api_key: str
-    printer_port: str
-    baudrate: int
-    printer_profile: str
-    save_connection: bool
-
-
-@dataclass(frozen=True)
-class PrinterControlSettings:
-    bed_preheat_c: int
-    hotend_preheat_c: int = 200
-
-
 @dataclass(frozen=True)
 class AppSettings:
-    base_dir: Path
     host: str
     port: int
-    public_url: str | None
-    wifi_ssid: str
-    wifi_password: str
-    hotspot_gateway: str
-    admin_pin: str
     database_path: Path
-    database_url: str | None
-    internal_api_token: str
-    generated_dir: Path
-    designs_dir: Path
-    queue: QueueSettings
-    tools: ToolSettings
-    slicer: SlicerSettings
-    model: ModelSettings
-    octoprint: OctoPrintSettings
-    printer_control: PrinterControlSettings
-    worker_poll_seconds: int
+    catalog_dir: Path
+    offices_path: Path
+    cart_max_units: int
+    internal_token: str
 
-    def ensure_directories(self) -> None:
-        if not self.database_url or self.database_url.startswith("sqlite:"):
-            self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self.generated_dir.mkdir(parents=True, exist_ok=True)
+    @property
+    def database_url(self) -> str:
+        return f"sqlite:///{self.database_path.as_posix()}"
 
 
-def load_settings(base_dir: Path | None = None) -> AppSettings:
-    base = base_dir or PROJECT_ROOT
-    _read_dotenv(base / ".env")
-
-    config_path = base / "config" / "app.yaml"
-    data: dict[str, Any] = {}
-    if config_path.exists():
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-
-    server = data.get("server", {})
-    storage = data.get("storage", {})
-    queue = data.get("queue", {})
-    worker = data.get("worker", {})
-    tools = data.get("external_tools", {})
-    slicer = data.get("slicer", {})
-    model = data.get("model", {})
-    octoprint = data.get("octoprint", {})
-    printer_control = data.get("printer_control", {})
-    wifi = data.get("wifi", {})
-
-    api_key_env = octoprint.get("api_key_env", "OCTOPRINT_API_KEY")
-    bed_size = queue.get("bed_size_mm", [220, 220])
-
+def load_settings(config_path: Path | None = None) -> AppSettings:
+    _read_dotenv(PROJECT_ROOT / ".env")
+    path = config_path or PROJECT_ROOT / "config" / "app.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    server = raw.get("server") or {}
+    storage = raw.get("storage") or {}
+    cart = raw.get("cart") or {}
+    token = os.environ.get("INTERNAL_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("INTERNAL_API_TOKEN is required")
+    max_units = _env_int("CART_MAX_UNITS", int(cart.get("max_units") or 99))
+    if max_units < 1:
+        raise RuntimeError("cart.max_units must be at least 1")
     return AppSettings(
-        base_dir=base,
-        host=os.environ.get("HOST") or server.get("host", "0.0.0.0"),
-        port=_env_int("PORT", int(server.get("port", 8120))),
-        public_url=(os.environ.get("PUBLIC_URL") or server.get("public_url") or None),
-        wifi_ssid=str(os.environ.get("KEYCHAIN_WIFI_SSID") or wifi.get("ssid", "KeychainFair")),
-        wifi_password=str(os.environ.get("KEYCHAIN_WIFI_PASSWORD") or wifi.get("password", "fair2026")),
-        hotspot_gateway=str(os.environ.get("KEYCHAIN_HOTSPOT_GATEWAY") or wifi.get("hotspot_gateway", "192.168.137.1")),
-        admin_pin=os.environ.get("ADMIN_PIN", "1337"),
-        internal_api_token=os.environ.get("INTERNAL_API_TOKEN", ""),
-        database_path=_resolve(base, storage.get("database", "data/orders.sqlite3")),
-        database_url=os.environ.get("DATABASE_URL") or storage.get("database_url") or None,
-        generated_dir=_resolve(base, storage.get("generated_dir", "generated")),
-        designs_dir=_resolve(base, storage.get("designs_dir", "designs")),
-        queue=QueueSettings(
-            max_items_per_plate=int(queue.get("max_items_per_plate", 8)),
-            max_wait_minutes=int(queue.get("max_wait_minutes", 10)),
-            bed_size_mm=(float(bed_size[0]), float(bed_size[1])),
-            item_spacing_mm=float(queue.get("item_spacing_mm", 8)),
-            blank_size_id=os.environ.get("BLANK_SIZE_ID") or queue.get("blank_size_id", "compact"),
-        ),
-        tools=ToolSettings(
-            openscad_path=str(os.environ.get("OPENSCAD_PATH") or tools.get("openscad_path", "openscad")),
-            openscad_timeout_seconds=_env_int("OPENSCAD_TIMEOUT_SECONDS", int(tools.get("openscad_timeout_seconds", 60))),
-            cura_engine_path=str(os.environ.get("CURA_ENGINE_PATH") or tools.get("cura_engine_path", "CuraEngine")),
-            cura_timeout_seconds=_env_int("CURA_TIMEOUT_SECONDS", int(tools.get("cura_timeout_seconds", 120))),
-        ),
-        slicer=SlicerSettings(
-            enabled=_env_bool("SLICER_ENABLED", bool(slicer.get("enabled", False))),
-            profile_path=_resolve(base, slicer.get("profile_path", "config/slicer.example.yaml")),
-        ),
-        model=ModelSettings(
-            base_height_mm=float(model.get("base_height_mm", 3.2)),
-        ),
-        octoprint=OctoPrintSettings(
-            enabled=_env_bool("OCTOPRINT_ENABLED", bool(octoprint.get("enabled", False))),
-            base_url=str(os.environ.get("OCTOPRINT_BASE_URL") or octoprint.get("base_url", "http://127.0.0.1:5000")).rstrip("/"),
-            api_key=os.environ.get(api_key_env, ""),
-            printer_port=str(os.environ.get("OCTOPRINT_PRINTER_PORT") or octoprint.get("printer_port", "COM8")),
-            baudrate=_env_int("OCTOPRINT_BAUDRATE", int(octoprint.get("baudrate", 250000))),
-            printer_profile=str(os.environ.get("OCTOPRINT_PRINTER_PROFILE") or octoprint.get("printer_profile", "_default")),
-            save_connection=_env_bool("OCTOPRINT_SAVE_CONNECTION", bool(octoprint.get("save_connection", True))),
-        ),
-        printer_control=PrinterControlSettings(
-            bed_preheat_c=int(printer_control.get("bed_preheat_c", 60)),
-            hotend_preheat_c=int(printer_control.get("hotend_preheat_c", 200)),
-        ),
-        worker_poll_seconds=int(worker.get("poll_seconds", 3)),
+        host=str(server.get("host") or "0.0.0.0"),
+        port=int(server.get("port") or 8120),
+        database_path=_resolve(PROJECT_ROOT, os.environ.get("DATABASE_PATH") or storage.get("database") or "data/shop.sqlite3"),
+        catalog_dir=_resolve(PROJECT_ROOT, os.environ.get("CATALOG_DIR") or storage.get("catalog_dir") or "catalog"),
+        offices_path=_resolve(PROJECT_ROOT, os.environ.get("OFFICES_PATH") or storage.get("offices_path") or "config/europost-offices.json"),
+        cart_max_units=max_units,
+        internal_token=token,
     )

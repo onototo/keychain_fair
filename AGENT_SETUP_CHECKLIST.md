@@ -1,4 +1,4 @@
-# Keychain Fair: проверка окружения для Docker + Telegram bot
+# Магазин: проверка окружения для Docker и Telegram-бота
 
 ## Что должно быть установлено
 - Windows 10/11 с включенной виртуализацией в BIOS/UEFI.
@@ -28,12 +28,9 @@ cmd /c npm --version
 - Обязательные значения:
   - `TELEGRAM_BOT_TOKEN` - токен из BotFather.
   - `INTERNAL_API_TOKEN` - один и тот же секрет для `api` и `telegram-bot`.
-  - `ADMIN_PIN` - PIN админки.
-- Для Docker можно оставить:
-  - `SLICER_ENABLED=false`
-  - `OCTOPRINT_ENABLED=false`
-- Если OctoPrint работает на хосте Windows, использовать:
-  - `OCTOPRINT_BASE_URL=http://host.docker.internal:5000`
+  - `ADMIN_TELEGRAM_USER_IDS` - Telegram id администраторов через запятую.
+- Для перевода на карту: `PAYMENT_CARD_NUMBER` и `PAYMENT_CARD_HOLDER`.
+- Для кнопки карты и Apple Pay: `ONLINE_PAYMENT_URL`. Пока переменная пустая, кнопки нет.
 
 ## Проверки проекта
 ```powershell
@@ -48,12 +45,14 @@ cmd /c npm run build
 cd ..
 ```
 
+Постоянный бот запускается на отдельном домашнем ПК, не на машине разработки. Пока тот компьютер включён, заказы идут в Telegram. VPS — более поздний перенос того же compose.
+
 ## Запуск Docker stack
 ```powershell
 docker compose config
-docker compose up --build -d postgres api telegram-bot
+docker compose up --build -d api telegram-bot
 docker compose ps
 docker compose logs -f api telegram-bot
 ```
 
-Админка: `http://127.0.0.1:8080/admin`.
+Заказы смотрятся в Telegram, веб-админки нет. API: `http://127.0.0.1:8120/api/health`.

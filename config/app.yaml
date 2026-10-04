@@ -3,42 +3,9 @@ server:
   port: 8120
 
 storage:
-  database: data/orders.sqlite3
-  generated_dir: generated
-  designs_dir: designs
+  database: data/shop.sqlite3
+  catalog_dir: catalog
+  offices_path: config/europost-offices.json
 
-queue:
-  max_items_per_plate: 8
-  max_wait_minutes: 10
-  bed_size_mm: [220, 220]
-  item_spacing_mm: 8
-  blank_size_id: compact
-
-worker:
-  poll_seconds: 3
-
-external_tools:
-  openscad_path: "C:\\Program Files\\OpenSCAD\\openscad.exe"
-  openscad_timeout_seconds: 60
-  cura_engine_path: "C:\\Program Files\\Ultimaker Cura 5.2.1\\CuraEngine.exe"
-  cura_timeout_seconds: 180
-
-slicer:
-  enabled: true
-  profile_path: config/slicer.ender3.yaml
-
-model:
-  base_height_mm: 3.2
-
-printer_control:
-  bed_preheat_c: 60
-  hotend_preheat_c: 200
-
-octoprint:
-  enabled: true
-  base_url: http://127.0.0.1:5000
-  api_key_env: OCTOPRINT_API_KEY
-  printer_port: COM8
-  baudrate: 250000
-  printer_profile: _default
-  save_connection: true
+cart:
+  max_units: 99

@@ -1,72 +1,93 @@
-export type DesignSize = {
+export type Product = {
   id: string;
-  label: string;
-  price?: number;
-  width_mm?: number;
-  height_mm?: number;
-  row_height_mm?: number;
-  custom_text_limits?: {
-    max_total_chars: number;
-    max_line_1_chars: number;
-    max_line_2_chars: number;
-  };
+  title: string;
+  description: string;
+  price_kopecks: number;
+  price_byn: string;
+  has_image: boolean;
 };
 
-export type DesignElement = {
+export type IndexedProduct = Product & { code: string };
+
+export type IndexedCategory = {
   id: string;
-  label: string;
-  kind?: string;
-  shape?: string;
+  code: string;
+  title: string;
+  products: IndexedProduct[];
 };
 
-export type Design = {
+export type IndexedCatalog = {
+  maxUnits: number;
+  byCode: Map<string, IndexedProduct>;
+  byCategory: Map<string, IndexedCategory>;
+  categories: IndexedCategory[];
+};
+
+export type Category = {
   id: string;
-  name: string;
-  description?: string;
-  layout?: string;
-  print_mode?: string;
-  preview_image?: string;
-  default_elements?: string[];
-  default_size_id?: string;
-  sizes: DesignSize[];
-  elements: DesignElement[];
+  title: string;
+  products: Product[];
 };
 
-export type DraftData = {
-  designId?: string;
-  sizeId?: string;
-  elements: string[];
-  customerName?: string;
-  carNumber?: string;
-  printLine1?: string;
+export type Catalog = {
+  max_units: number;
+  categories: Category[];
 };
 
-export type DraftStep = "design" | "size" | "elements" | "loop" | "print_text" | "name" | "car" | "confirm";
-
-export type DraftSession = {
-  draftId: string;
-  step: DraftStep;
-  data: DraftData;
-  editing?: boolean;
+export type Office = {
+  id: string;
+  number: string;
+  city: string;
+  address: string;
 };
 
-export type TelegramUserMeta = {
-  chatId: string;
-  userId?: string;
-  username?: string;
+export type OrderItem = {
+  product_id: string;
+  title: string;
+  unit_price_kopecks: number;
+  quantity: number;
+  line_byn: string;
 };
 
-export type OrderPayload = {
+export type Order = {
+  id: string;
+  order_number_label: string;
+  status: string;
+  payment_method: string;
   customer_name: string;
-  car_number: string;
-  design_id: string;
-  size_id: string;
-  elements: string[];
-  print_line_1?: string;
-  print_line_2?: string;
-  idempotency_key: string;
-  source: "telegram";
-  telegram_chat_id: string;
-  telegram_user_id?: string;
-  telegram_username?: string;
+  phone: string;
+  telegram_chat_id?: string | null;
+  telegram_username?: string | null;
+  office_number: string;
+  office_city: string;
+  office_address: string;
+  total_byn: string;
+  tracking_number?: string | null;
+  shipment_status: string;
+  items: OrderItem[];
 };
+
+export type CartLine = {
+  productId: string;
+  quantity: number;
+};
+
+export type PaymentMethod = "cod" | "transfer" | "online";
+
+export type Session = {
+  step: "browse" | "city" | "name" | "phone" | "confirm" | "admin_tracking";
+  cart: CartLine[];
+  cartPage?: number;
+  paymentMethod?: PaymentMethod;
+  offices?: Office[];
+  officePage?: number;
+  officeId?: string;
+  customerName?: string;
+  phone?: string;
+  draftId?: string;
+  adminOrderId?: string;
+};
+
+export function emptySession(): Session {
+  return { step: "browse", cart: [] };
+}

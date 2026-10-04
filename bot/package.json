@@ -9,12 +9,10 @@
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "grammy": "^1.38.0",
-    "pg": "^8.16.3"
+    "grammy": "^1.38.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.14",
-    "@types/pg": "^8.15.4",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   }

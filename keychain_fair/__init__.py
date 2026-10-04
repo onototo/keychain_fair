@@ -1,2 +1,1 @@
-"""Local fair ordering system for custom 3D printed keychains."""
-
+"""Telegram shop for ready-made printed toys."""
