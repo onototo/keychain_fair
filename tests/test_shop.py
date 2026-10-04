@@ -188,3 +188,88 @@ def test_manual_gateway_does_not_create_remote_shipment():
     draft = ManualShipmentGateway().prepare({"total_kopecks": 100})
     assert draft.shipment_status == "manual"
     assert draft.shipment_id is None
+
+
+def test_two_products_share_one_unit_limit_and_keep_the_price_snapshot(tmp_path: Path):
+    client = make_client(tmp_path)
+    cube = tmp_path / "catalog" / "toys" / "cube"
+    cube.mkdir()
+    (cube / "product.yaml").write_text("title: Кубик\nprice_byn: 4\n", encoding="utf-8")
+
+    created = client.post(
+        "/api/internal/orders",
+        headers=HEADERS,
+        json=order_payload(
+            items=[
+                {"product_id": "toys/skull", "quantity": 2},
+                {"product_id": "toys/cube", "quantity": 3},
+            ],
+            idempotency_key="tg:1:two-products",
+            phone="+375 29 123-45-67",
+        ),
+    )
+    assert created.status_code == 200
+    order = created.json()["order"]
+    assert order["total_kopecks"] == 4300
+    assert order["phone"] == "+375291234567"
+    assert [item["title"] for item in order["items"]] == ["Кубик", "Череп"]
+
+    (tmp_path / "catalog" / "toys" / "skull" / "product.yaml").write_text(
+        "title: Череп\nprice_byn: 99\n",
+        encoding="utf-8",
+    )
+    stored = client.get(f"/api/internal/orders/{order['id']}", headers=HEADERS).json()["order"]
+    skull = next(item for item in stored["items"] if item["product_id"] == "toys/skull")
+    assert skull["unit_price_kopecks"] == 1550
+
+    second = client.post(
+        "/api/internal/orders",
+        headers=HEADERS,
+        json=order_payload(idempotency_key="tg:1:second"),
+    )
+    assert second.json()["order"]["order_number_label"] == "002"
+
+
+def test_order_rejects_bad_customer_data_and_missing_catalog_rows(tmp_path: Path):
+    client = make_client(tmp_path)
+    bad_name = client.post("/api/internal/orders", headers=HEADERS, json=order_payload(customer_name="Иван 1", idempotency_key="tg:1:name"))
+    bad_phone = client.post("/api/internal/orders", headers=HEADERS, json=order_payload(phone="123456", idempotency_key="tg:1:phone"))
+    missing_product = client.post(
+        "/api/internal/orders",
+        headers=HEADERS,
+        json=order_payload(items=[{"product_id": "toys/missing", "quantity": 1}], idempotency_key="tg:1:missing"),
+    )
+    missing_office = client.post("/api/internal/orders", headers=HEADERS, json=order_payload(office_id="999", idempotency_key="tg:1:office"))
+    assert bad_name.status_code == 400
+    assert "Имя" in bad_name.json()["detail"]
+    assert "телефон" in bad_phone.json()["detail"]
+    assert missing_product.json()["detail"] == "Товар больше не доступен"
+    assert missing_office.json()["detail"] == "Отделение не найдено"
+
+
+def test_admin_filters_cancel_and_payment_rules(tmp_path: Path):
+    client = make_client(tmp_path)
+    cod = client.post("/api/internal/orders", headers=HEADERS, json=order_payload()).json()["order"]
+    online = client.post(
+        "/api/internal/orders",
+        headers=HEADERS,
+        json=order_payload(payment_method="online", idempotency_key="tg:1:online"),
+    ).json()["order"]
+    assert online["status"] == "awaiting_transfer"
+    assert online["cod_amount_kopecks"] == 0
+    assert client.post(f"/api/internal/orders/{cod['id']}/payment", headers=HEADERS).status_code == 409
+
+    cancelled = client.post(f"/api/internal/orders/{cod['id']}/cancel", headers=HEADERS).json()["order"]
+    assert cancelled["status"] == "cancelled"
+    assert client.get("/api/internal/orders", headers=HEADERS, params={"status": "new"}).json()["orders"] == []
+    assert client.get("/api/internal/orders", headers=HEADERS, params={"status": "printing"}).status_code == 400
+    assert client.get("/api/internal/orders/missing", headers=HEADERS).status_code == 404
+
+
+def test_session_can_be_replaced_and_cleared(tmp_path: Path):
+    client = make_client(tmp_path)
+    client.put("/api/internal/sessions/42", headers=HEADERS, json={"state": {"step": "city", "cart": []}})
+    client.put("/api/internal/sessions/42", headers=HEADERS, json={"state": {"step": "phone", "cart": [{"productId": "toys/skull", "quantity": 2}]}})
+    assert client.get("/api/internal/sessions/42", headers=HEADERS).json()["state"]["step"] == "phone"
+    assert client.delete("/api/internal/sessions/42", headers=HEADERS).status_code == 200
+    assert client.get("/api/internal/sessions/42", headers=HEADERS).json()["state"] is None

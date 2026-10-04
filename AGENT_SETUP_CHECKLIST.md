@@ -47,12 +47,10 @@ cd ..
 
 Постоянный бот запускается на отдельном домашнем ПК, не на машине разработки. Пока тот компьютер включён, заказы идут в Telegram. VPS — более поздний перенос того же compose.
 
-## Запуск Docker stack
-```powershell
-docker compose config
-docker compose up --build -d api telegram-bot
-docker compose ps
-docker compose logs -f api telegram-bot
+## Запуск на ПК магазина
+```bat
+start_server.bat
+stop_server.bat
 ```
 
 Заказы смотрятся в Telegram, веб-админки нет. API: `http://127.0.0.1:8120/api/health`.

@@ -21,3 +21,14 @@ test("admin ids and optional payment settings come from env", () => {
   assert.equal(config.onlinePaymentUrl, "https://pay.example");
   assert.equal(config.apiBaseUrl, "http://127.0.0.1:8120");
 });
+
+test("config rejects a missing token and trims the api url", () => {
+  assert.throws(() => loadConfig({ INTERNAL_API_TOKEN: "secret" }), /TELEGRAM_BOT_TOKEN is required/);
+  const config = loadConfig({
+    TELEGRAM_BOT_TOKEN: "token",
+    INTERNAL_API_TOKEN: "secret",
+    API_BASE_URL: "http://api:8120/",
+  });
+  assert.equal(config.apiBaseUrl, "http://api:8120");
+  assert.deepEqual(config.adminUserIds, []);
+});
