@@ -1,4 +1,4 @@
-import { CART_PAGE_SIZE, formatByn, pageSlice, shortId, units } from "./cart.js";
+import { CART_PAGE_SIZE, formatByn, pageSlice, shortId } from "./cart.js";
 import type { CartLine, IndexedProduct, Order, PaymentMethod, Session } from "./types.js";
 
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
@@ -33,7 +33,7 @@ export function renderCart(cart: CartLine[], catalog: IndexedCatalog, page: numb
     const product = catalog.byCode.get(shortId(line.productId));
     return sum + (product?.price_kopecks ?? 0) * line.quantity;
   }, 0);
-  const lines = ["Корзина:", ...rows, `Итого: ${formatByn(total)}`, `${units(cart)} из ${catalog.maxUnits} штук`];
+  const lines = ["Корзина:", ...rows, `Итого: ${formatByn(total)}`];
   if (sliced.pages > 1) lines.push(`Страница ${sliced.page + 1} из ${sliced.pages}`);
   return { text: lines.join("\n"), page: sliced.page, pages: sliced.pages };
 }

@@ -53,7 +53,7 @@ test("cart text shows the shared total and a missing product", () => {
   assert.match(text, /Череп × 2 — 30 BYN/);
   assert.match(text, /Товар снят с каталога × 1 — 0 BYN/);
   assert.match(text, /Итого: 30 BYN/);
-  assert.match(text, /3 из 99 штук/);
+  assert.doesNotMatch(text, /99 штук/);
 });
 
 test("checkout and order cards name the payment and manual shipment", () => {

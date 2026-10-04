@@ -177,9 +177,8 @@ def test_session_roundtrip(tmp_path: Path):
 
 def test_example_catalog_and_office_snapshot_load():
     catalog = load_catalog(PROJECT_ROOT / "catalog")
-    product = catalog.find("example/sample")
-    assert product is not None
-    assert product.price_kopecks == 1000
+    assert catalog.find("test/keychain").price_kopecks == 700
+    assert catalog.find("test/figure").price_kopecks == 1500
     offices = (PROJECT_ROOT / "config" / "europost-offices.json").read_text(encoding="utf-8")
     assert "Минск" in offices
 

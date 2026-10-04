@@ -12,7 +12,7 @@ catalog/figurki/cherep/product.yaml
 catalog/figurki/cherep/1.jpg
 ```
 
-`category.yaml` содержит `title`. `product.yaml` содержит `title`, `price_byn` и `description`. Картинки `jpg`, `png` или `webp` лежат рядом, первой по имени бот показывает обложку. Папка `catalog/example` — образец, её можно удалить.
+`category.yaml` содержит `title`. `product.yaml` содержит `title`, `price_byn` и `description`. Картинки `jpg`, `png` или `webp` лежат рядом, первой по имени бот показывает обложку. Папка `catalog/test` — два тестовых товара, её можно удалить.
 
 В корзине не больше `cart.max_units` штук суммарно. Сейчас это 99, число меняется в `config/app.yaml`.
 
